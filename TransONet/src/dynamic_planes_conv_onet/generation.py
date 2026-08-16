@@ -647,7 +647,6 @@ class Generator3D(object):
         if getattr(self, 'gen_enc_done', False):
             return
         if p.is_cuda:
-            torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
         self.t_gen_enc = time.time()
 
@@ -688,7 +687,6 @@ class Generator3D(object):
         if getattr(self, 'gen_eval_done', False):
             return
         if p.is_cuda:
-            torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
         self.t_gen_eval = time.time()
 
@@ -726,7 +724,6 @@ class Generator3D(object):
         if getattr(self, 'gen_mcubes_done', False):
             return
         if p.is_cuda:
-            torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
         self.t_gen_mcubes = time.time()
 
