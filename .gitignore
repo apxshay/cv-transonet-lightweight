@@ -1,0 +1,71 @@
+# --- Local / private (never push) ---
+.local/
+Papers/
+.cursor/
+*.cursor-*
+
+# --- Datasets & generated artifacts ---
+data/ShapeNet/
+data/watertight/
+data/synthetic_room/
+dataset/
+watertight/
+outputs/
+TransONet/out/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.npz
+*.binvox
+*.ply
+*.obj
+*.off
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- IDE / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Logs & profiling dumps ---
+logs/
+runs/
+*.log
+wandb/
+tensorboard/
+profile_*.txt
+mac_*.json
+
+# --- Large media (keep repo small) ---
+*.pdf
+!presentation/*.pdf
+
+# --- Docker / build artifacts ---
+*.o
+*.a
+TransONet/src/utils/**/build/
