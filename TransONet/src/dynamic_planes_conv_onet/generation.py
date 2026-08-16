@@ -69,8 +69,13 @@ class Generator3D(object):
         inputs = data.get('inputs', torch.empty(1, 0)).to(device)
         kwargs = {}
 
+        # profiling: generate (start)
+        self.start_gen_prof(inputs)
+
         # Encode inputs
         t0 = time.time()
+        # profiling: generate_encode (start)
+        self.start_gen_enc_prof(inputs)
         with torch.no_grad():
             semantic_map = data.get('semantic_map', None)
             if semantic_map is not None:
@@ -78,6 +83,8 @@ class Generator3D(object):
             else:
                 #c, _ = self.model.encode_inputs(inputs)
                 c = self.model.encode_inputs(inputs, self.optimizer)
+        # profiling: generate_encode (end)
+        self.end_gen_enc_prof(inputs)
 
         stats_dict['time (encode inputs)'] = time.time() - t0
 
@@ -86,6 +93,9 @@ class Generator3D(object):
         #z = q_z.rsample()
         #print(z.shape)
         mesh = self.generate_from_latent(z, c, stats_dict=stats_dict, **kwargs)
+
+        # profiling: generate (end)
+        self.end_gen_prof(inputs)
 
         if return_stats:
             return mesh, stats_dict
@@ -159,6 +169,8 @@ class Generator3D(object):
         threshold = np.log(self.threshold) - np.log(1. - self.threshold)
 
         t0 = time.time()
+        # profiling: generate_eval (start)
+        self.start_gen_eval_prof(z)
         # Compute bounding box size
         box_size = 1 + self.padding
 
@@ -191,6 +203,9 @@ class Generator3D(object):
                 points = mesh_extractor.query()
 
             value_grid = mesh_extractor.to_dense()
+
+        # profiling: generate_eval (end)
+        self.end_gen_eval_prof(z)
 
         # Extract mesh
         stats_dict['time (eval points)'] = time.time() - t0
@@ -279,10 +294,14 @@ class Generator3D(object):
         threshold = np.log(self.threshold) - np.log(1. - self.threshold)
         # Make sure that mesh is watertight
         t0 = time.time()
+        # profiling: generate_mcubes (start)
+        self.start_gen_mcubes_prof(z)
         occ_hat_padded = np.pad(
             occ_hat, 1, 'constant', constant_values=-1e6)
         vertices, triangles = libmcubes.marching_cubes(
             occ_hat_padded, threshold)
+        # profiling: generate_mcubes (end)
+        self.end_gen_mcubes_prof(z)
         stats_dict['time (marching cubes)'] = time.time() - t0
         # Strange behaviour in libmcubes: vertices are shifted by 0.5
         #vertices -= 0.5
@@ -580,5 +599,164 @@ class Generator3D(object):
         
 
         return pcd
-    
+
+    ### Profiling: generate (start)
+    def start_gen_prof(self, p):
+        if getattr(self, 'gen_done', False):
+            return
+        # thop misses scatter, grid_sample, MISE, marching cubes. expected.
+        if p.is_cuda:
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+        self.t_gen = time.time()
+
+    ### Profiling: generate (end)
+    def end_gen_prof(self, p):
+        if getattr(self, 't_gen', None) is None:
+            return
+        if p.is_cuda:
+            torch.cuda.synchronize()
+        dt = time.time() - self.t_gen
+        self.t_gen = None
+
+        if not hasattr(self, 'gen_times'):
+            self.gen_times = []
+        self.gen_times.append(dt)
+
+        # 3 warmup + 10 timed
+        if len(self.gen_times) < 13:
+            return
+
+        mean_t = sum(self.gen_times[3:]) / 10.0
+        nparams = 0
+        for par in self.model.parameters():
+            nparams += par.numel()
+
+        if p.is_cuda:
+            mem_a = torch.cuda.max_memory_allocated() / 1e6
+            mem_r = torch.cuda.max_memory_reserved() / 1e6
+        else:
+            mem_a, mem_r = 0.0, 0.0
+
+        print('generate', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
+              nparams, nparams, nparams * 4 / 1e6, -1, 100)
+        self.gen_done = True
+
+    ### Profiling: generate_encode (start)
+    def start_gen_enc_prof(self, p):
+        if getattr(self, 'gen_enc_done', False):
+            return
+        if p.is_cuda:
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+        self.t_gen_enc = time.time()
+
+    ### Profiling: generate_encode (end)
+    def end_gen_enc_prof(self, p):
+        if getattr(self, 't_gen_enc', None) is None:
+            return
+        if p.is_cuda:
+            torch.cuda.synchronize()
+        dt = time.time() - self.t_gen_enc
+        self.t_gen_enc = None
+
+        if not hasattr(self, 'gen_enc_times'):
+            self.gen_enc_times = []
+        self.gen_enc_times.append(dt)
+
+        # 3 warmup + 10 timed
+        if len(self.gen_enc_times) < 13:
+            return
+
+        mean_t = sum(self.gen_enc_times[3:]) / 10.0
+        nparams = 0
+        for par in self.model.parameters():
+            nparams += par.numel()
+
+        if p.is_cuda:
+            mem_a = torch.cuda.max_memory_allocated() / 1e6
+            mem_r = torch.cuda.max_memory_reserved() / 1e6
+        else:
+            mem_a, mem_r = 0.0, 0.0
+
+        print('generate_encode', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
+              nparams, nparams, nparams * 4 / 1e6, -1, -1)
+        self.gen_enc_done = True
+
+    ### Profiling: generate_eval (start)
+    def start_gen_eval_prof(self, p):
+        if getattr(self, 'gen_eval_done', False):
+            return
+        if p.is_cuda:
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+        self.t_gen_eval = time.time()
+
+    ### Profiling: generate_eval (end)
+    def end_gen_eval_prof(self, p):
+        if getattr(self, 't_gen_eval', None) is None:
+            return
+        if p.is_cuda:
+            torch.cuda.synchronize()
+        dt = time.time() - self.t_gen_eval
+        self.t_gen_eval = None
+
+        if not hasattr(self, 'gen_eval_times'):
+            self.gen_eval_times = []
+        self.gen_eval_times.append(dt)
+
+        # 3 warmup + 10 timed
+        if len(self.gen_eval_times) < 13:
+            return
+
+        mean_t = sum(self.gen_eval_times[3:]) / 10.0
+
+        if p.is_cuda:
+            mem_a = torch.cuda.max_memory_allocated() / 1e6
+            mem_r = torch.cuda.max_memory_reserved() / 1e6
+        else:
+            mem_a, mem_r = 0.0, 0.0
+
+        print('generate_eval', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
+              0, 0, 0, -1, -1)
+        self.gen_eval_done = True
+
+    ### Profiling: generate_mcubes (start)
+    def start_gen_mcubes_prof(self, p):
+        if getattr(self, 'gen_mcubes_done', False):
+            return
+        if p.is_cuda:
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+        self.t_gen_mcubes = time.time()
+
+    ### Profiling: generate_mcubes (end)
+    def end_gen_mcubes_prof(self, p):
+        if getattr(self, 't_gen_mcubes', None) is None:
+            return
+        if p.is_cuda:
+            torch.cuda.synchronize()
+        dt = time.time() - self.t_gen_mcubes
+        self.t_gen_mcubes = None
+
+        if not hasattr(self, 'gen_mcubes_times'):
+            self.gen_mcubes_times = []
+        self.gen_mcubes_times.append(dt)
+
+        # 3 warmup + 10 timed
+        if len(self.gen_mcubes_times) < 13:
+            return
+
+        mean_t = sum(self.gen_mcubes_times[3:]) / 10.0
+
+        if p.is_cuda:
+            mem_a = torch.cuda.max_memory_allocated() / 1e6
+            mem_r = torch.cuda.max_memory_reserved() / 1e6
+        else:
+            mem_a, mem_r = 0.0, 0.0
+
+        print('generate_mcubes', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
+              0, 0, 0, -1, -1)
+        self.gen_mcubes_done = True
+       
     
