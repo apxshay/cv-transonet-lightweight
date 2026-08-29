@@ -13,7 +13,55 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from torch._six import inf
+from math import inf
+
+
+_PROFILE_HEADER_PRINTED = False
+
+
+def print_profile_row(block, mean_seconds, allocated_mb, reserved_mb,
+                      params=None, macs=None, final=False):
+    """Print one consistently formatted profiling result row."""
+    global _PROFILE_HEADER_PRINTED
+
+    columns = (
+        ('Block', 20),
+        ('Time [ms]', 12),
+        ('Rate [1/s]', 13),
+        ('Alloc [MB]', 12),
+        ('Reserved [MB]', 15),
+        ('Parameters', 14),
+        ('FP32 [MB]', 12),
+        ('Linear MACs', 16),
+    )
+    separator_width = sum(width for _, width in columns) + len(columns) - 1
+
+    if not _PROFILE_HEADER_PRINTED:
+        print('\nPROFILING SUMMARY (3 warm-up calls discarded, mean of 10 calls)')
+        print(' '.join(f'{label:<{width}}' if i == 0 else f'{label:>{width}}'
+                       for i, (label, width) in enumerate(columns)))
+        print('-' * separator_width)
+        _PROFILE_HEADER_PRINTED = True
+
+    rate = 1.0 / mean_seconds if mean_seconds > 0 else None
+    fp32_mb = params * 4 / 1e6 if params is not None else None
+    missing = '-'
+    values = (
+        f'{block:<20}',
+        f'{mean_seconds * 1000:>12.3f}',
+        f'{rate:>13.2f}' if rate is not None else f'{missing:>13}',
+        f'{allocated_mb:>12.3f}',
+        f'{reserved_mb:>15.3f}',
+        f'{params:>14,}' if params is not None else f'{missing:>14}',
+        f'{fp32_mb:>12.3f}' if fp32_mb is not None else f'{missing:>12}',
+        f'{macs:>16,}' if macs is not None else f'{missing:>16}',
+    )
+    print(' '.join(values))
+
+    if final:
+        print('-' * separator_width)
+
+
 def batch_index_select(x, idx):
     if len(x.size()) == 3:
         B, N, C = x.size()

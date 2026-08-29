@@ -17,7 +17,7 @@ import pdb
 import time
 from src.utils.others import NativeScalerWithGradNormCount as NativeScaler
 
-from src.utils.others import SineLayer
+from src.utils.others import SineLayer, print_profile_row
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)
     return out
@@ -334,8 +334,8 @@ class DynamicLocalPoolPointnet(nn.Module):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('encoder', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              nparams, nparams, nparams * 4 / 1e6, self.enc_macs, -1)
+        print_profile_row('Encoder', mean_t, mem_a, mem_r,
+                          params=nparams, macs=self.enc_macs)
         self.enc_done = True
 
     ### Profiling: dyvit (start)
@@ -390,8 +390,8 @@ class DynamicLocalPoolPointnet(nn.Module):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('dyvit', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              nparams, nparams, nparams * 4 / 1e6, self.dyvit_macs, -1)
+        print_profile_row('DyViT', mean_t, mem_a, mem_r,
+                          params=nparams, macs=self.dyvit_macs)
         self.dyvit_done = True
 
 

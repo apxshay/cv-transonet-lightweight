@@ -10,6 +10,7 @@ from src.utils import libmcubes
 from src.common import make_3d_grid
 from src.utils.libsimplify import simplify_mesh
 from src.utils.libmise import MISE
+from src.utils.others import print_profile_row
 import time
 import pdb
 import sys
@@ -183,7 +184,6 @@ class Generator3D(object):
             values = self.eval_points(pointsf, z, c, **kwargs).cpu().numpy()
             value_grid = values.reshape(nx, nx, nx)
         else:
-            print('MISE')
             mesh_extractor = MISE(
                 self.resolution0, self.upsampling_steps, threshold)
 
@@ -322,7 +322,6 @@ class Generator3D(object):
 
         else:
             normals = None
-        print(len(vertices))
         # Create mesh
         mesh = trimesh.Trimesh(vertices, triangles,
                                vertex_normals=normals,
@@ -638,8 +637,8 @@ class Generator3D(object):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('generate', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              nparams, nparams, nparams * 4 / 1e6, -1, 100)
+        print_profile_row('Full generation', mean_t, mem_a, mem_r,
+                          params=nparams, final=True)
         self.gen_done = True
 
     ### Profiling: generate_encode (start)
@@ -678,8 +677,8 @@ class Generator3D(object):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('generate_encode', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              nparams, nparams, nparams * 4 / 1e6, -1, -1)
+        print_profile_row('Encode total', mean_t, mem_a, mem_r,
+                          params=nparams)
         self.gen_enc_done = True
 
     ### Profiling: generate_eval (start)
@@ -715,8 +714,7 @@ class Generator3D(object):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('generate_eval', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              0, 0, 0, -1, -1)
+        print_profile_row('Evaluate points', mean_t, mem_a, mem_r)
         self.gen_eval_done = True
 
     ### Profiling: generate_mcubes (start)
@@ -752,8 +750,7 @@ class Generator3D(object):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('generate_mcubes', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              0, 0, 0, -1, -1)
+        print_profile_row('Marching Cubes', mean_t, mem_a, mem_r)
         self.gen_mcubes_done = True
        
     

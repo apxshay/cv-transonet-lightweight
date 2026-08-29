@@ -7,7 +7,7 @@ from src.layers import (
 from src.common import normalize_coordinate, normalize_3d_coordinate, coordinate2index, positional_encoding, normalize_dynamic_plane_coordinate
 import pdb
 import time
-from src.utils.others import SineLayer
+from src.utils.others import SineLayer, print_profile_row
 
 
 class DynamicLocalDecoder(nn.Module):
@@ -210,7 +210,7 @@ class DynamicLocalDecoder(nn.Module):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print('decoder', mean_t * 1000, 1.0 / mean_t, mem_a, mem_r,
-              nparams, nparams, nparams * 4 / 1e6, self.dec_macs, -1)
+        print_profile_row('Decoder call', mean_t, mem_a, mem_r,
+                          params=nparams, macs=self.dec_macs)
         self.dec_done = True
 

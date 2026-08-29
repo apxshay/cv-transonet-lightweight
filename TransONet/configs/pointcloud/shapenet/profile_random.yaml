@@ -1,0 +1,21 @@
+inherit_from: configs/pointcloud/shapenet/shapenet_dynamic_3plane.yaml
+
+data:
+  path: /dataset
+
+training:
+  out_dir: out/profiling/random_init
+
+test:
+  model_file: null
+
+generation:
+  # One object for each of the 13 ShapeNet categories gives exactly
+  # 3 warm-up forwards followed by the 10 measured forwards.
+  vis_n_outputs: 1
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: false
+
+profiling:
+  one_sample_per_category: true

@@ -17,7 +17,7 @@ numpy_include_dir = numpy.get_include()
 pykdtree = Extension(
     'src.utils.libkdtree.pykdtree.kdtree',
     sources=[
-        './src/utils/libkdtree/pykdtree/kdtree.c',
+        './src/utils/libkdtree/pykdtree/kdtree.pyx',
         './src/utils/libkdtree/pykdtree/_kdtree_core.c'
     ],
     language='c',
@@ -83,7 +83,7 @@ ext_modules = [
 ]
 
 setup(
-    ext_modules=cythonize(ext_modules),
+    ext_modules=cythonize(ext_modules, build_dir='build/cython'),
     include_dirs=[numpy_include_dir],
     #cmdclass={
     #    'build_ext': BuildExtension

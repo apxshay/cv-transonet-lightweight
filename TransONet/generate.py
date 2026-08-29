@@ -26,7 +26,7 @@ args = parser.parse_args()
 cfg = config.load_config(args.config, 'configs/default.yaml')
 is_cuda = (torch.cuda.is_available() and not args.no_cuda)
 device = torch.device("cuda" if is_cuda else "cpu")
-print(device)
+print('Device: %s' % device)
 out_dir = cfg['training']['out_dir']
 generation_dir = os.path.join(out_dir, cfg['generation']['generation_dir'])
 out_time_file = os.path.join(generation_dir, 'time_generation_full.csv')
@@ -41,6 +41,19 @@ if vis_n_outputs is None:
 # Dataset
 dataset = config.get_dataset('test', cfg, return_idx=True)
 
+# The profiling run needs one sample per category, not a full pass over every
+# test object. This keeps the measured forwards unchanged while avoiding
+# thousands of unused data loads between categories.
+if cfg.get('profiling', {}).get('one_sample_per_category', False):
+    first_model_by_category = {}
+    for model_dict in dataset.models:
+        category = model_dict['category']
+        if category not in first_model_by_category:
+            first_model_by_category[category] = model_dict
+    dataset.models = list(first_model_by_category.values())
+    print('Profiling subset: %d samples (%d categories)'
+          % (len(dataset.models), len(first_model_by_category)))
+
 
 # Model
 model = config.get_model(cfg, device=device, dataset=dataset)
@@ -48,8 +61,12 @@ model = config.get_model(cfg, device=device, dataset=dataset)
 
 checkpoint_io = CheckpointIO(out_dir, model=model)
 
-print(cfg['test']['model_file'])
-checkpoint_io.load(cfg['test']['model_file'])
+model_file = cfg['test'].get('model_file')
+if model_file:
+    print('Checkpoint: %s' % model_file)
+    checkpoint_io.load(model_file)
+else:
+    print('Checkpoint: none (using random weights)')
 
 # Generator
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -210,14 +227,14 @@ for it, data in enumerate(tqdm(test_loader)):
 time_df = pd.DataFrame(time_dicts)
 time_df.set_index(['idx'], inplace=True)
 time_df.to_csv(out_time_file)
-print(out_time_file)
+print('Per-object timings: %s' % out_time_file)
 
 # Create pickle files  with main statistics
-time_df_class = time_df.groupby(by=['class id']).mean()
+time_df_class = time_df.groupby(by=['class id']).mean(numeric_only=True)
 time_df_class.to_csv(out_time_file_class)
-print(out_time_file_class)
+print('Per-class timings: %s' % out_time_file_class)
 
 # Print results
 time_df_class.loc['mean'] = time_df_class.mean()
-print('Timings [s]:')
+print('Raw timings by class [s] (includes warm-up/startup):')
 print(time_df_class)
