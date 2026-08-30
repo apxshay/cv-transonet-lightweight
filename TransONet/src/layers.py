@@ -38,12 +38,12 @@ class FCPlanenet(nn.Module):
         self.fc_3 = nn.Linear(2 * hidden_dim, hidden_dim)
         self.fc_c = nn.Linear(hidden_dim, c_dim)
 
-        # self.actvn = nn.ReLU()
+        self.actvn = nn.ReLU()
         #
-        self.actvn_1 = SineLayer(2*hidden_dim,2*hidden_dim,is_first=True)
-        self.actvn_2 = SineLayer(2*hidden_dim,2*hidden_dim)
-        self.actvn_3 = SineLayer(hidden_dim,hidden_dim)
-        self.actvn_c = SineLayer(c_dim,c_dim)
+        # self.actvn_1 = SineLayer(2*hidden_dim,2*hidden_dim,is_first=True)
+        # self.actvn_2 = SineLayer(2*hidden_dim,2*hidden_dim)
+        # self.actvn_3 = SineLayer(hidden_dim,hidden_dim)
+        # self.actvn_c = SineLayer(c_dim,c_dim)
         self.pool = maxpool
 
         # MLP
@@ -60,36 +60,36 @@ class FCPlanenet(nn.Module):
         # Simple Point Net
         net = self.fc_pos(p)
         #print('hidden_dim:{}'.format(self.hidden_dim))
-        # net = self.fc_0(self.actvn(net))
-        net = self.fc_0(self.actvn_1(net))
+        net = self.fc_0(self.actvn(net))
+        # net = self.fc_0(self.actvn_1(net))
         pooled = self.pool(net, dim=1, keepdim=True).expand(net.size())
         net = torch.cat([net, pooled], dim=2)
 
-        # net = self.fc_1(self.actvn(net))
-        net = self.fc_1(self.actvn_2(net))
+        net = self.fc_1(self.actvn(net))
+        # net = self.fc_1(self.actvn_2(net))
         pooled = self.pool(net, dim=1, keepdim=True).expand(net.size())
         net = torch.cat([net, pooled], dim=2)
 
-        # net = self.fc_2(self.actvn(net))
-        net = self.fc_2(self.actvn_2(net))
+        net = self.fc_2(self.actvn(net))
+        # net = self.fc_2(self.actvn_2(net))
         pooled = self.pool(net, dim=1, keepdim=True).expand(net.size())
         net = torch.cat([net, pooled], dim=2)
 
-        # net = self.fc_3(self.actvn(net))
-        net = self.fc_3(self.actvn_2(net))
+        net = self.fc_3(self.actvn(net))
+        # net = self.fc_3(self.actvn_2(net))
 
         # Reduce to B x hidden_dim
         net = self.pool(net, dim=1)
-        # net = self.fc_c(self.actvn(net))
-        net = self.fc_c(self.actvn_3(net))
+        net = self.fc_c(self.actvn(net))
+        # net = self.fc_c(self.actvn_3(net))
 
         # MLP
-        # net = self.mlp0(self.actvn(net))
-        net = self.mlp0(self.actvn_c(net))
-        # net = self.mlp1(self.actvn(net))
-        net = self.mlp1(self.actvn_3(net))
-        # net = self.mlp2(self.actvn(net))
-        net = self.mlp2(self.actvn_3(net))
+        net = self.mlp0(self.actvn(net))
+        # net = self.mlp0(self.actvn_c(net))
+        net = self.mlp1(self.actvn(net))
+        # net = self.mlp1(self.actvn_3(net))
+        net = self.mlp2(self.actvn(net))
+        # net = self.mlp2(self.actvn_3(net))
 
         return (net)
 
@@ -119,9 +119,9 @@ class ResnetBlockFC(nn.Module):
         # Submodules
         self.fc_0 = nn.Linear(size_in, size_h)
         self.fc_1 = nn.Linear(size_h, size_out)
-        # self.actvn = nn.ReLU()
-        self.actvn_1 = SineLayer(size_in,size_in)
-        self.actvn_2 = SineLayer(size_h,size_h)
+        self.actvn = nn.ReLU()
+        # self.actvn_1 = SineLayer(size_in,size_in)
+        # self.actvn_2 = SineLayer(size_h,size_h)
         if size_in == size_out:
             self.shortcut = None
         else:
@@ -130,10 +130,10 @@ class ResnetBlockFC(nn.Module):
         nn.init.zeros_(self.fc_1.weight)
 
     def forward(self, x):
-        # net = self.fc_0(self.actvn(x))
-        net = self.fc_0(self.actvn_1(x))
-        # dx = self.fc_1(self.actvn(net))
-        dx = self.fc_1(self.actvn_2(net))
+        net = self.fc_0(self.actvn(x))
+        dx = self.fc_1(self.actvn(net))
+        # net = self.fc_0(self.actvn_1(x))
+        # dx = self.fc_1(self.actvn_2(net))
 
         if self.shortcut is not None:
             x_s = self.shortcut(x)

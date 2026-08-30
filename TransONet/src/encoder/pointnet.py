@@ -74,7 +74,8 @@ class DynamicLocalPoolPointnet(nn.Module):
             nn.Linear(3, hidden_dim) for i in range(n_channels)
         ])
 
-        self.actvn = SineLayer(in_features=c_dim, out_features=c_dim, is_first=True)
+        # self.actvn = SineLayer(in_features=c_dim, out_features=c_dim, is_first=True)
+        self.actvn = nn.ReLU()
         self.hidden_dim = hidden_dim
 
 
