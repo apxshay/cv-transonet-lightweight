@@ -189,8 +189,5 @@ dependencies:
       - wget==3.2
       - widgetsnbextension==4.0.5
       - zipp==3.12.0
-variables:
-  #CUDA_HOME: /usr/local/cuda
-  #PATH: /opt/conda/envs/neuralblox/lib/python3.8/site-packages/graphviz/__init__.py:/opt/conda/envs/neuralblox/lib/python3.8/site-packages/graphviz:/opt/conda/envs/neuralblox/lib/python3.8/site-packages:/opt/conda/envs/neuralblox/bin:/opt/conda/bin/conda:/usr/local/cuda/bin:/usr/local/cuda-11.3/bin:/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
 prefix: /opt/conda/envs/neuralblox
 

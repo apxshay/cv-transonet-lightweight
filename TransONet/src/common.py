@@ -16,46 +16,27 @@ def ChangeBasis(plane_parameters, device='cuda'):
     Output:
             C_mat (tensor) : (batch_size x L x 4 x 3)
     '''
-    device = device
     batch_size, L, _ = plane_parameters.size()
-    normal = plane_parameters.reshape([batch_size * L, 3]).float().to(device)
-    normal = normal / torch.norm(normal, p=2, dim=1).view(batch_size * L, 1)  # normalize
-    normal = normal + 0.000001  # Avoid non-invertible matrix down the road
+    n = plane_parameters.reshape([batch_size * L, 3]).float().to(device)
+    n = n / torch.norm(n, p=2, dim=1).view(batch_size * L, 1).clamp(min=1e-8)
 
-    basis_x = torch.tensor([1, 0, 0], dtype=torch.float32).repeat(batch_size * L, 1).to(device)
-    basis_y = torch.tensor([0, 1, 0], dtype=torch.float32).repeat(batch_size * L, 1).to(device)
-    basis_z = torch.tensor([0, 0, 1], dtype=torch.float32).repeat(batch_size * L, 1).to(device)
+    nx = n[:, 0]
+    ny = n[:, 1]
+    nz = n[:, 2]
+    # Duff et al. JCGT 2017
+    sign = torch.copysign(torch.ones_like(nz), nz)
+    a = -1.0 / (sign + nz)
+    b = nx * ny * a
+    b1 = torch.stack((1.0 + sign * nx * nx * a, sign * b, -sign * nx), dim=1)
+    b2 = torch.stack((b, sign + ny * ny * a, -ny), dim=1)
 
-    v = torch.cross(basis_z.to(device), normal, dim=1)
-    zero = torch.zeros([batch_size * L], dtype=torch.float32).to(device)
-    skew = torch.zeros([batch_size * L, 3, 3], dtype=torch.float32).to(device)
-    skew[range(batch_size * L), 0] = torch.stack([zero, -v[:, 2], v[:, 1]]).t()
-    skew[range(batch_size * L), 1] = torch.stack([v[:, 2], zero, -v[:, 0]]).t()
-    skew[range(batch_size * L), 2] = torch.stack([-v[:, 1], v[:, 0], zero]).t()
-
-    idty = torch.eye(3).to(device)
-    idty = idty.reshape((1, 3, 3))
-    idty = idty.repeat(batch_size * L, 1, 1)
-    dot = (1 - torch.sum(normal * basis_z, dim=1)).unsqueeze(1).unsqueeze(2)
-    div = torch.norm(v, p=2, dim=1) ** 2
-    div = div.unsqueeze(1).unsqueeze(2)
-
-    R = (idty + skew + torch.matmul(skew, skew) * dot / div)
-
-    new_basis_x = torch.bmm(R, basis_x.unsqueeze(2))
-    new_basis_y = torch.bmm(R, basis_y.unsqueeze(2))
-    new_basis_z = torch.bmm(R, basis_z.unsqueeze(2))
-
-    new_basis_matrix = torch.cat([new_basis_x, new_basis_y, new_basis_z], dim=2)
-
-    C_inv = torch.inverse(new_basis_matrix)
+    C_inv = torch.stack((b1, b2, n), dim=1)
 
     # Define normalization constant
-    b_x = torch.abs(new_basis_x).squeeze(2)
-    b_y = torch.abs(new_basis_y).squeeze(2)
-    p_dummy = torch.tensor([1, 1, 1], dtype=torch.float32).repeat(batch_size * L, 1).to(device)
-    p_x = torch.sum(b_x * p_dummy, dim=1).unsqueeze(1) / torch.sum(b_x * b_x, dim=1).unsqueeze(1) * b_x
-    p_y = torch.sum(b_y * p_dummy, dim=1).unsqueeze(1) / torch.sum(b_y * b_y, dim=1).unsqueeze(1) * b_y
+    b_x = torch.abs(b1)
+    b_y = torch.abs(b2)
+    p_x = torch.sum(b_x, dim=1).unsqueeze(1) / torch.sum(b_x * b_x, dim=1).unsqueeze(1) * b_x
+    p_y = torch.sum(b_y, dim=1).unsqueeze(1) / torch.sum(b_y * b_y, dim=1).unsqueeze(1) * b_y
 
     c_x = torch.norm(p_x, p=2, dim=1)
     c_y = torch.norm(p_y, p=2, dim=1)
