@@ -26,9 +26,11 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     dim = cfg['data']['dim']
     z_dim = cfg['model']['z_dim']
     c_dim = cfg['model']['c_dim']
-    decoder_kwargs = cfg['model']['decoder_kwargs']
+    decoder_kwargs = dict(cfg['model']['decoder_kwargs'])
     encoder_kwargs = cfg['model']['encoder_kwargs']
     padding = cfg['data']['padding']
+    profile_macs = cfg.get('profiling', {}).get('count_macs', False)
+    decoder_kwargs.setdefault('profile_macs', profile_macs)
     print('encoder: {}'.format(encoder))
     print('decoder: {}'.format(decoder))
     decoder = models.decoder_dict[decoder](

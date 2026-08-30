@@ -3,9 +3,8 @@ import torch.optim as optim
 from torch import autograd
 import numpy as np
 from tqdm import trange
-import open3d as o3d
-
 import trimesh
+import open3d as o3d
 from src.utils import libmcubes
 from src.common import make_3d_grid
 from src.utils.libsimplify import simplify_mesh
@@ -187,22 +186,50 @@ class Generator3D(object):
             mesh_extractor = MISE(
                 self.resolution0, self.upsampling_steps, threshold)
 
+            stats_dict.setdefault('n_decoder_calls', 0)
+            stats_dict.setdefault('n_queries', 0)
+            stats_dict.setdefault('n_query_chunks', 0)
+            stats_dict.setdefault('time (decode)', 0.0)
+            stats_dict.setdefault('time (mise)', 0.0)
+            stats_dict.setdefault('time (host transfer)', 0.0)
+
+            t_mise = time.time()
             points = mesh_extractor.query()
+            stats_dict['time (mise)'] += time.time() - t_mise
 
             while points.shape[0] != 0:
-                # Query points
+                t_transfer = time.time()
                 pointsf = torch.FloatTensor(points).to(self.device)
                 # Normalize to bounding box
                 pointsf = pointsf / mesh_extractor.resolution
                 pointsf = box_size * (pointsf - 0.5)
-                # Evaluate model and update
-                values = self.eval_points(
-                    pointsf, z, c, **kwargs).cpu().numpy()
-                values = values.astype(np.float64)
-                mesh_extractor.update(points, values)
-                points = mesh_extractor.query()
+                stats_dict['time (host transfer)'] += time.time() - t_transfer
 
+                values = self.eval_points(
+                    pointsf, z, c, stats_dict=stats_dict, **kwargs)
+
+                t_transfer = time.time()
+                values = values.cpu().numpy()
+                values = values.astype(np.float64)
+                stats_dict['time (host transfer)'] += time.time() - t_transfer
+
+                t_mise = time.time()
+                mesh_extractor.update(points, values)
+                stats_dict['time (mise)'] += time.time() - t_mise
+
+                t_mise = time.time()
+                points = mesh_extractor.query()
+                stats_dict['time (mise)'] += time.time() - t_mise
+
+            t_mise = time.time()
             value_grid = mesh_extractor.to_dense()
+            stats_dict['time (mise)'] += time.time() - t_mise
+
+            if stats_dict['n_queries'] > 0:
+                stats_dict['us_per_1k_queries'] = (
+                    1e6 * stats_dict['time (decode)']
+                    / (stats_dict['n_queries'] / 1000.0)
+                )
 
         # profiling: generate_eval (end)
         self.end_gen_eval_prof(z)
@@ -257,26 +284,61 @@ class Generator3D(object):
         mesh = self.extract_mesh(value_grid, z, c, stats_dict=stats_dict)	
         return mesh
 
-    def eval_points(self, p, z, c=None, **kwargs):
+    def eval_points(self, p, z, c=None, stats_dict=None, **kwargs):
         ''' Evaluates the occupancy values for the points.
 
         Args:
             p (tensor): points 
             z (tensor): latent code z
             c (tensor): latent conditioned code c
+            stats_dict (dict): optional stats accumulator for Step 0 metrics
         '''
-        #print(p.shape, self.points_batch_size)
         p_split = torch.split(p, self.points_batch_size)
+        n_chunks = len(p_split)
+        use_cuda = self.device.type == 'cuda'
+
+        if stats_dict is not None:
+            stats_dict['n_query_chunks'] = (
+                stats_dict.get('n_query_chunks', 0) + n_chunks
+            )
+            stats_dict['n_decoder_calls'] = (
+                stats_dict.get('n_decoder_calls', 0) + n_chunks
+            )
+
         occ_hats = []
 
         for pi in p_split:
+            if stats_dict is not None:
+                stats_dict['n_queries'] = (
+                    stats_dict.get('n_queries', 0) + pi.shape[0]
+                )
+
             pi = pi.unsqueeze(0).to(self.device)
+
+            if use_cuda:
+                torch.cuda.synchronize()
+            t_dec = time.time()
             with torch.no_grad():
-                occ_hat = self.model.decode(pi, z, c, **kwargs).logits	
-            occ_hats.append(occ_hat.squeeze(0).detach().cpu())
+                occ_hat = self.model.decode(pi, z, c, **kwargs).logits
+            if use_cuda:
+                torch.cuda.synchronize()
+            if stats_dict is not None:
+                stats_dict['time (decode)'] = (
+                    stats_dict.get('time (decode)', 0.0)
+                    + (time.time() - t_dec)
+                )
+
+            t_transfer = time.time()
+            occ_cpu = occ_hat.squeeze(0).detach().cpu()
+            if stats_dict is not None:
+                stats_dict['time (host transfer)'] = (
+                    stats_dict.get('time (host transfer)', 0.0)
+                    + (time.time() - t_transfer)
+                )
+
+            occ_hats.append(occ_cpu)
 
         occ_hat = torch.cat(occ_hats, dim=0)
-        #print(p_split[0].shape)
         return occ_hat
 
     def extract_mesh(self, occ_hat, z, c=None, stats_dict=dict()):

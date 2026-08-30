@@ -20,14 +20,15 @@ _PROFILE_HEADER_PRINTED = False
 
 
 def print_profile_row(block, mean_seconds, allocated_mb, reserved_mb,
-                      params=None, macs=None, final=False):
+                      params=None, macs=None, final=False,
+                      rate_override=None, rate_label='Rate [1/s]'):
     """Print one consistently formatted profiling result row."""
     global _PROFILE_HEADER_PRINTED
 
     columns = (
         ('Block', 20),
         ('Time [ms]', 12),
-        ('Rate [1/s]', 13),
+        (rate_label, 13),
         ('Alloc [MB]', 12),
         ('Reserved [MB]', 15),
         ('Parameters', 14),
@@ -43,13 +44,17 @@ def print_profile_row(block, mean_seconds, allocated_mb, reserved_mb,
         print('-' * separator_width)
         _PROFILE_HEADER_PRINTED = True
 
-    rate = 1.0 / mean_seconds if mean_seconds > 0 else None
+    if rate_override is not None:
+        rate_str = f'{rate_override:>13.2f}'
+    else:
+        rate = 1.0 / mean_seconds if mean_seconds > 0 else None
+        rate_str = f'{rate:>13.2f}' if rate is not None else f'{"-":>13}'
     fp32_mb = params * 4 / 1e6 if params is not None else None
     missing = '-'
     values = (
         f'{block:<20}',
         f'{mean_seconds * 1000:>12.3f}',
-        f'{rate:>13.2f}' if rate is not None else f'{missing:>13}',
+        rate_str,
         f'{allocated_mb:>12.3f}',
         f'{reserved_mb:>15.3f}',
         f'{params:>14,}' if params is not None else f'{missing:>14}',
