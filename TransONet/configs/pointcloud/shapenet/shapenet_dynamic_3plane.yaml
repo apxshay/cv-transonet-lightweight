@@ -3,7 +3,7 @@ data:
   input_type: pointcloud
   classes: null
   input_type: pointcloud
-  path: ../dataset/
+  path: ../dataset/ShapeNet
   watertight_path: ../watertight
   pointcloud_n: 3000
   pointcloud_noise: 0.005
@@ -50,7 +50,7 @@ test:
   threshold: 0.2
   eval_mesh: true
   eval_pointcloud: false
-  model_file: /out/pointcloud/shapenet_dynamic_3plane_final/model_best.pt
+  model_file: model.pt
   #model_file: None
 generation:
   batch_size: 100000

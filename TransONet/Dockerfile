@@ -66,6 +66,8 @@ RUN groupadd --gid $USER_GID $USERNAME \
 
 ADD environment.yaml /tmp/environment.yml
 RUN /bin/bash --login
+RUN /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
+ && /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 RUN /opt/conda/bin/conda env create -f /tmp/environment.yml
 
 RUN conda info --envs
@@ -103,12 +105,12 @@ WORKDIR /workspace
 
 
 #commands on terminal to use everytime you start the docker container:
-"""
- #create the base env of conda
- eval "$(conda shell.bash hook)"
- #activate your env
- conda activate neuralblox
-"""
+# """
+#  #create the base env of conda
+#  eval "$(conda shell.bash hook)"
+#  #activate your env
+#  conda activate neuralblox
+# """
 
 
 
