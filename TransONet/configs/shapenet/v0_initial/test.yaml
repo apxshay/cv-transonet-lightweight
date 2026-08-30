@@ -1,0 +1,16 @@
+inherit_from: configs/shapenet/v0_initial/train.yaml
+
+data:
+  path: /dataset
+
+training:
+  out_dir: out/v0_initial/test
+
+test:
+  model_file: /workspace/out/v0_initial/train/model_best.pt
+
+generation:
+  vis_n_outputs: null
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: false

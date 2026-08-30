@@ -73,7 +73,7 @@ You can download the synthetic room dataset from this [link](https://drive.googl
 You can download the synthetic room ground truth dataset from [here](https://drive.google.com/drive/folders/146yLumnrNaoAgXjk8HHaHUVTTtIOWMpO?usp=sharing)
 
 ### Configuration
-Choose one of the configuration .yaml files in the [configs/pointcloud folder](configs/pointcloud). Replace the "path" value with the path to the dataset (synthetic_room_dataset for rooms config file and ShapeNet dataset for shapenet config file), if there is a watertight path replace the value with the path to the watertight datset. If you have a pretrained model replace the "model_file" value with the path to the .pt file of the pretrained model, otherwise type "None"
+Choose a version under the [ShapeNet configurations](configs/shapenet) or the [room configurations](configs/room). Each version uses clear operation names such as `train.yaml`, `profile.yaml`, and `test.yaml`. Replace the `data.path` value with the dataset path when needed. If you have a pretrained model, set `test.model_file` to its `.pt` file; otherwise use a new training output directory to start from random weights.
 
 ### Mesh Generation
 To generate meshes using a trained model, use
@@ -94,7 +94,7 @@ Finally, to train a new network from scratch, run:
 ```
 python train.py CONFIG.yaml
 ```
-For available training options, please take a look at `configs/default.yaml` and `configs/pointcloud/shapenet_dynamic_3plane.yaml`.
+For available training options, please take a look at `configs/default.yaml` and a version-specific training file such as `configs/shapenet/v1_duff/train.yaml`.
 
 If you want to run these commands on CPU add flag to the command:
 
@@ -103,7 +103,7 @@ If you want to run these commands on CPU add flag to the command:
 ```
 
 ### Configuration file setup for training
-This part will explain how to modify `configs/pointcloud/shapenet_dynamic_3plane.yaml` to run according to your wishes.
+This part explains how to modify a version-specific file such as `configs/shapenet/v1_duff/train.yaml` to run according to your wishes.
 
 #### **Loss Similarity**
 

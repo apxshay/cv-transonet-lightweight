@@ -39,7 +39,7 @@ model:
   c_dim: 512
   z_dim: 64
 training:
-  out_dir:  out/default
+  out_dir: out/default/train
   batch_size: 64
   print_every: 200
   visualize_every: 1000

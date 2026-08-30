@@ -1,13 +1,13 @@
-inherit_from: configs/pointcloud/shapenet/shapenet_dynamic_3plane.yaml
+inherit_from: configs/shapenet/v0_initial/train.yaml
 
 data:
   path: /dataset
 
 training:
-  out_dir: out/profiling/v0_initial
+  out_dir: out/v0_initial/profile
 
 test:
-  model_file: /workspace/model_versions/v0_initial/weights/model_best.pt
+  model_file: /workspace/out/v0_initial/train/model_best.pt
 
 generation:
   vis_n_outputs: 1

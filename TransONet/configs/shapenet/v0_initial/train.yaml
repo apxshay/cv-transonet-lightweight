@@ -34,7 +34,7 @@ model:
   c_dim: 32
   z_dim: 0
 training:
-  out_dir: out/pointcloud/shapenet_dynamic_3plane_final
+  out_dir: out/v0_initial/train
   batch_size: 128
   similarity: True
   model_selection_metric: iou

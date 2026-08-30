@@ -117,11 +117,11 @@ WORKDIR /workspace
 
 
 # ********************************************************
-# python train.py configs/pointcloud/shapenet/shapenet_dynamic_3plane_final.yaml
+# python train.py configs/shapenet/v1_duff/train.yaml
 # ********************************************************
 #tensorboard
 #check what PID is running on port 6006-> lsof -i:6006
 #kill <PID>
-#pycharm ->  tensorboard --bind_all --logdir out/pointcloud/shapenet_dynamic_3plane_final/logs
+#pycharm ->  tensorboard --bind_all --logdir out/v1_duff/train/logs
 #locaalhost -> http://192.168.1.74:8083/
 # ********************************************************
