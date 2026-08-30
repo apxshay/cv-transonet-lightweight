@@ -166,7 +166,7 @@ def get_data_fields(mode, cfg):
     points_iou_file = cfg['data']['points_iou_file']
 
 
-    if points_iou_file is not None:
+    if points_iou_file is not None and mode != 'train':
         fields['points_iou'] = data.PointsField(
             points_iou_file,
             unpackbits=cfg['data']['points_unpackbits'],

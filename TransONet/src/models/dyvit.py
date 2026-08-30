@@ -442,37 +442,31 @@ class VisionTransformerDiffPruning(nn.Module):
         policy = torch.ones(B, init_n + 1, 1, dtype=x.dtype, device=x.device)
         #print("policy shape:{}".format(policy.shape))
         for i, blk in enumerate(self.blocks):
-            # if i in self.pruning_loc:
-            #     spatial_x = x[:, 1:]
-            #
-            #     pred_score = self.score_predictor[p_count](spatial_x, prev_decision).reshape(B, -1, 2)
-            #     if self.training:
-            #         hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 0:1] * prev_decision
-            #
-            #         out_pred_prob.append(hard_keep_decision.reshape(B, init_n))
-            #         cls_policy = torch.ones(B, 1, 1, dtype=hard_keep_decision.dtype, device=hard_keep_decision.device)
-            #         policy = torch.cat([cls_policy, hard_keep_decision], dim=1)
-            #
-            #         x = blk(x, policy=policy)
-            #         prev_decision = hard_keep_decision
-            #     else:
-            #         score = pred_score[:,:,0]
-            #         num_keep_node = int(init_n * self.token_ratio[p_count])
-            #         keep_policy = torch.argsort(score, dim=1, descending=True)[:, :num_keep_node]
-            #         cls_policy = torch.zeros(B, 1, dtype=keep_policy.dtype, device=keep_policy.device)
-            #         now_policy = torch.cat([cls_policy, keep_policy + 1], dim=1)
-            #         x = batch_index_select(x, now_policy)
-            #         prev_decision = batch_index_select(prev_decision, keep_policy)
-            #         x = blk(x)
-            #     p_count += 1
-            # else:
-
-            if self.training:
-
-                x = blk(x, policy)
+            if i in self.pruning_loc:
+                spatial_x = x[:, 1:]
+                pred_score = self.score_predictor[p_count](spatial_x, prev_decision).reshape(B, -1, 2)
+                if self.training:
+                    hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 0:1] * prev_decision
+                    out_pred_prob.append(hard_keep_decision.reshape(B, init_n))
+                    cls_policy = torch.ones(B, 1, 1, dtype=hard_keep_decision.dtype, device=hard_keep_decision.device)
+                    policy = torch.cat([cls_policy, hard_keep_decision], dim=1)
+                    x = blk(x, policy=policy)
+                    prev_decision = hard_keep_decision
+                else:
+                    score = pred_score[:, :, 0]
+                    num_keep_node = int(init_n * self.token_ratio[p_count])
+                    keep_policy = torch.argsort(score, dim=1, descending=True)[:, :num_keep_node]
+                    cls_policy = torch.zeros(B, 1, dtype=keep_policy.dtype, device=keep_policy.device)
+                    now_policy = torch.cat([cls_policy, keep_policy + 1], dim=1)
+                    x = batch_index_select(x, now_policy)
+                    prev_decision = batch_index_select(prev_decision, keep_policy)
+                    x = blk(x)
+                p_count += 1
             else:
-                #print('qui')
-                x = blk(x)
+                if self.training:
+                    x = blk(x, policy)
+                else:
+                    x = blk(x)
         #print('x shape after blocks {}'.format(x.shape))
         B,N,C = x.shape
         H = W = int((N)**0.5)

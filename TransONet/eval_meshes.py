@@ -150,7 +150,7 @@ for it, data in enumerate(tqdm(test_loader)):
     }
     eval_dicts.append(eval_dict)
     c_it = model_counter[category_id]
-    if c_it < vis_n_outputs:
+    if vis_n_outputs < 0 or c_it < vis_n_outputs:
     # Evaluate mesh
         if cfg['test']['eval_mesh']:
             mesh_file = os.path.join(mesh_dir, '%s.obj' % modelname)
@@ -199,7 +199,7 @@ eval_df.set_index(['idx'], inplace=True)
 eval_df.to_pickle(out_file)
 
 # Create CSV file  with main statistics
-eval_df_class = eval_df.groupby(by=['class id']).mean()
+eval_df_class = eval_df.groupby(by=['class id']).mean(numeric_only=True)
 eval_df_class.to_csv(out_file_class)
 
 # Print results

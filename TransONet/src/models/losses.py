@@ -72,6 +72,8 @@ class DistillDiffPruningLoss_dynamic(nn.Module):
         self.ratio_loss = 0
         self.cls_distill_loss = 0
         self.token_distill_loss = 0
+        self.reconstruction_loss = 0
+        self.teacher_reconstruction_loss = 0
         self.mse_token = mse_token
         self.dynamic = dynamic
 
@@ -107,14 +109,15 @@ class DistillDiffPruningLoss_dynamic(nn.Module):
 
         #cls_loss = self.base_criterion(pred, labels)
 
-        with torch.no_grad():
-
-            cls_t, token_t = self.teacher_model(inputs)
+        cls_t, token_t = self.teacher_model(inputs)
+        target = inputs.detach().flatten(1)
+        reconstruction_loss = F.mse_loss(pred, target)
+        teacher_reconstruction_loss = F.mse_loss(cls_t, target)
         #print("pred type {}, shape {}".format(type(pred), pred.shape))
         #print("cls_t type {}, shape {}".format(type(cls_t), cls_t.shape))
         cls_kl_loss = F.kl_div(
             F.log_softmax(pred, dim=-1),
-            F.log_softmax(cls_t, dim=-1),
+            F.log_softmax(cls_t.detach(), dim=-1),
             reduction='batchmean',
             log_target=True
         )
@@ -129,7 +132,7 @@ class DistillDiffPruningLoss_dynamic(nn.Module):
         loss_part = []
 
         token_pred = token_pred.reshape(B * N, C)
-        token_t = token_t.reshape(B * N, C)
+        token_t = token_t.detach().reshape(B * N, C)
 
         if mask.sum() < 0.1:
             token_kl_loss = token_pred.new(1, ).fill_(0.0)
@@ -148,14 +151,16 @@ class DistillDiffPruningLoss_dynamic(nn.Module):
 
         # print(cls_loss, pred_loss)
         #loss = self.clf_weight * cls_loss + self.ratio_weight * pred_loss / len(
-        loss = self.clf_weight + self.ratio_weight * pred_loss / len(
+        loss = reconstruction_loss + teacher_reconstruction_loss + self.ratio_weight * pred_loss / len(
             self.pruning_loc) + self.distill_weight * cls_kl_loss + self.distill_weight * token_kl_loss
 
         if self.print_mode:
             #self.cls_loss += cls_loss.item()
-            self.ratio_loss += pred_loss#.item()
+            self.ratio_loss += pred_loss.item()
             self.cls_distill_loss += cls_kl_loss.item()
             self.token_distill_loss += token_kl_loss.item()
+            self.reconstruction_loss += reconstruction_loss.item()
+            self.teacher_reconstruction_loss += teacher_reconstruction_loss.item()
            # loss_part.append(cls_loss)
             loss_part.append(pred_loss)
             loss_part.append(cls_kl_loss)
@@ -163,12 +168,15 @@ class DistillDiffPruningLoss_dynamic(nn.Module):
             self.count += 1
             if self.count == 100:
                 #print('loss info: cls_loss=%.4f, ratio_loss=%.4f, cls_kl=%.4f, token_kl=%.4f' % (
-                print('ratio_loss=%.4f, cls_kl=%.4f, token_kl=%.4f' % (
+                print('student_recon=%.4f, teacher_recon=%.4f, ratio_loss=%.4f, cls_kl=%.4f, token_kl=%.4f' % (
                 #self.cls_loss / 100, self.ratio_loss / 100, self.cls_distill_loss / 100, self.token_distill_loss / 100))
+                self.reconstruction_loss / 100, self.teacher_reconstruction_loss / 100,
                 self.ratio_loss / 100, self.cls_distill_loss / 100, self.token_distill_loss / 100))
                 self.count = 0
                 self.cls_loss = 0
                 self.ratio_loss = 0
                 self.cls_distill_loss = 0
                 self.token_distill_loss = 0
+                self.reconstruction_loss = 0
+                self.teacher_reconstruction_loss = 0
         return loss, loss_part

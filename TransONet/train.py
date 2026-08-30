@@ -73,7 +73,9 @@ val_dataset = config.get_dataset('val', cfg, return_idx=True)
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=batch_size, num_workers=cfg['training']['n_workers'], shuffle=True,
     collate_fn=data.collate_remove_none,
-    worker_init_fn=data.worker_init_fn)
+    worker_init_fn=data.worker_init_fn, pin_memory=is_cuda,
+    persistent_workers=cfg['training']['n_workers'] > 0,
+    prefetch_factor=4 if cfg['training']['n_workers'] > 0 else None)
 
 val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=1, num_workers=cfg['training']['n_workers_val'], shuffle=False,
@@ -95,7 +97,7 @@ inputs=next(iter(train_loader))
 # Model
 model = config.get_model(cfg, device=device, dataset=train_dataset)
 
-logger = SummaryWriter(os.path.join(out_dir, 'logs'))
+logger = SummaryWriter(os.path.join(out_dir, 'logs'), flush_secs=30)
 
 
 # Build a data dictionary for visualization
@@ -162,12 +164,21 @@ print('output path: ', cfg['training']['out_dir'])
 
 
 #while True:
-for epoch in range(267): #epoch 13 scenes
-    epoch_it += 1
+max_epochs = 267
+print('Training plan: %d epochs, %d batches/epoch, starting from epoch %d'
+      % (max_epochs, len(train_loader), epoch_it + 1))
+training_start = time.time()
+for epoch in range(epoch_it, max_epochs): #epoch 13 scenes
+    epoch_it = epoch + 1
+    epoch_start = time.time()
+    epoch_loss = 0.
+    epoch_batches = 0
 
-    for batch in tqdm(train_loader):
+    for batch in tqdm(train_loader, desc='Epoch %d/%d' % (epoch_it, max_epochs)):
         it += 1
         loss = trainer.train_step(cfg, batch)
+        epoch_loss += loss
+        epoch_batches += 1
         logger.add_scalar('train/loss', loss, it)
         
         if print_every > 0 and (it % print_every) == 0:
@@ -215,12 +226,14 @@ for epoch in range(267): #epoch 13 scenes
         # Save checkpoint
         if (checkpoint_every > 0 and (it % checkpoint_every) == 0):
             print('Saving checkpoint')
+            logger.flush()
             checkpoint_io.save('model.pt', epoch_it=epoch_it, it=it,
                                loss_val_best=metric_val_best)
 
         # Backup if necessary
         if (backup_every > 0 and (it % backup_every) == 0):
             print('Backup checkpoint')
+            logger.flush()
             checkpoint_io.save('model_%d.pt' % it, epoch_it=epoch_it, it=it,
                                loss_val_best=metric_val_best)
         # Run validation
@@ -243,6 +256,20 @@ for epoch in range(267): #epoch 13 scenes
         # Exit if necessary
         if exit_after > 0 and (time.time() - t0) >= exit_after:
             print('Time limit reached. Exiting.')
+            logger.flush()
             checkpoint_io.save('model.pt', epoch_it=epoch_it, it=it,
                                loss_val_best=metric_val_best)
             exit(3)
+
+    epoch_seconds = time.time() - epoch_start
+    eta_seconds = epoch_seconds * (max_epochs - epoch_it)
+    print('[Epoch %d/%d complete] avg_loss=%.4f, epoch=%s, elapsed=%s, ETA=%s'
+          % (epoch_it, max_epochs, epoch_loss / max(epoch_batches, 1),
+             datetime.timedelta(seconds=int(epoch_seconds)),
+             datetime.timedelta(seconds=int(time.time() - training_start)),
+             datetime.timedelta(seconds=int(eta_seconds))))
+
+logger.flush()
+checkpoint_io.save('model.pt', epoch_it=epoch_it, it=it,
+                   loss_val_best=metric_val_best)
+logger.close()

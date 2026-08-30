@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 from src.layers import ResnetBlockFC, FCPlanenet
 from torch_scatter import scatter_mean, scatter_max
 from src.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate, positional_encoding, \
@@ -15,8 +14,6 @@ from ..models.fast_quant import fast_quant
 from ..models.generic_transformer import Transformer
 import pdb
 import time
-from src.utils.others import NativeScalerWithGradNormCount as NativeScaler
-
 from src.utils.others import SineLayer, print_profile_row
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)
@@ -85,8 +82,8 @@ class DynamicLocalPoolPointnet(nn.Module):
         self.optimizer = None
 
 
-        PRUNING_LOC = [3, 6, 9]
-        self.KEEP_RATE = [0.7, 0.7 ** 2, 0.7 ** 3]
+        PRUNING_LOC = [1]
+        self.KEEP_RATE = [0.7]
 
         self.transformer = VisionTransformerDiffPruning(
             img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
@@ -134,7 +131,6 @@ class DynamicLocalPoolPointnet(nn.Module):
                                       self.reso_plane)  # sparce matrix (B x 512 x reso x reso)
 
         loss_dvit = None
-        loss_scaler = NativeScaler()
         fea_plane_before = fea_plane
 
         # profiling: encoder (end)
@@ -149,12 +145,8 @@ class DynamicLocalPoolPointnet(nn.Module):
             self.end_dyvit_prof(p)
 
             outputs = [fea_plane, token_pred, mask, out_pred_score]
-            optimizer = optim.Adam(self.transformer.parameters(), lr=1e-4)
 
             loss_dvit, loss_dvit_part = self.criterion(fea_plane_before, outputs)
-            grad_norm = loss_scaler(loss_dvit, self.optimizer, clip_grad=None,
-                                    parameters=self.transformer.parameters(), create_graph=True,
-                                    update_grad=True)
             fea_plane = fea_plane.reshape(B, H, W, C)
 
 
@@ -168,7 +160,7 @@ class DynamicLocalPoolPointnet(nn.Module):
             fea_plane = fea_plane.reshape(B, H, W, C)
 
         if self.training:
-            return fea_plane, grad_norm
+            return fea_plane, loss_dvit
         else:
             return fea_plane
 

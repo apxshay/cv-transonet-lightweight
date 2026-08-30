@@ -13,6 +13,7 @@ from math import sin,cos,radians,sqrt
 import random	
 from mpl_toolkits.mplot3d import Axes3D	
 import matplotlib.pyplot as plt
+from contextlib import nullcontext
 
 
 class Trainer(BaseTrainer):
@@ -52,13 +53,13 @@ class Trainer(BaseTrainer):
             DEGREES (integer): degree range in which object is going to be rotated
         '''
         self.model.train()
-        torch.autograd.set_detect_anomaly(True)
-        self.optimizer.zero_grad()
+        debug_anomaly = cfg.get('training', {}).get('debug_anomaly', False)
+        self.optimizer.zero_grad(set_to_none=True)
         #loss, plane_loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
-        loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
-        #print('plane loss shape: '+str(plane_loss.shape))
-
-        loss.backward(retain_graph=True)
+        anomaly_context = torch.autograd.detect_anomaly() if debug_anomaly else nullcontext()
+        with anomaly_context:
+            loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
+            loss.backward()
 
         self.optimizer.step()
 

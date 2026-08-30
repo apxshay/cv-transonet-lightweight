@@ -69,3 +69,12 @@ mac_*.json
 *.o
 *.a
 TransONet/src/utils/**/build/
+
+# --- Model versions ---
+!TransONet/model_versions/
+!TransONet/model_versions/**/*.pt
+!TransONet/model_versions/**/*.pkl
+
+# Local model-version notes
+TransONet/model_versions/README.md
+TransONet/model_versions/*/README.md

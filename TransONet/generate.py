@@ -163,7 +163,7 @@ for it, data in enumerate(tqdm(test_loader)):
     out_file_dict = {}
 
     c_it = model_counter[category_id]
-    if c_it < vis_n_outputs:
+    if vis_n_outputs < 0 or c_it < vis_n_outputs:
 
     # Also copy ground truth
         if cfg['generation']['copy_groundtruth']:

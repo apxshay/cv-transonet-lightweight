@@ -1,0 +1,16 @@
+inherit_from: configs/pointcloud/shapenet/shapenet_dynamic_3plane.yaml
+
+data:
+  path: /dataset
+
+training:
+  out_dir: out/evaluation/v0_initial
+
+test:
+  model_file: /workspace/model_versions/v0_initial/weights/model_best.pt
+
+generation:
+  vis_n_outputs: null
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: false

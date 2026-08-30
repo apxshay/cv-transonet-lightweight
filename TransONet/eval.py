@@ -96,7 +96,7 @@ eval_df.set_index(['idx'], inplace=True)
 eval_df.to_pickle(out_file)
 
 # Create CSV file  with main statistics
-eval_df_class = eval_df.groupby(by=['class name']).mean()
+eval_df_class = eval_df.groupby(by=['class name']).mean(numeric_only=True)
 eval_df_class.to_csv(out_file_class)
 
 # Print results
