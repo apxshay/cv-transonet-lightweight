@@ -25,11 +25,14 @@ class DynamicLocalDecoder(nn.Module):
         
     '''
     def __init__(self, dim=3, z_dim=128, c_dim=128,
-                 hidden_size=256, leaky=False, sample_mode='bilinear', n_blocks=5, pos_encoding=False, padding=0.1):
+                 hidden_size=256, leaky=False, sample_mode='bilinear',
+                 n_blocks=5, pos_encoding=False, padding=0.1,
+                 profile_macs=False):
         super().__init__()
         self.z_dim = z_dim
         self.c_dim = c_dim
         self.n_blocks = n_blocks
+        self.profile_macs = profile_macs
         
         if pos_encoding == True:
             dim = 60 # hardcoded
@@ -159,6 +162,8 @@ class DynamicLocalDecoder(nn.Module):
 
     ### Profiling: decoder (start)
     def start_dec_prof(self, p):
+        if not getattr(self, 'profile_macs', False):
+            return
         if getattr(self, 'dec_done', False):
             return
         self.dec_macs = 0
@@ -180,6 +185,8 @@ class DynamicLocalDecoder(nn.Module):
 
     ### Profiling: decoder (end)
     def end_dec_prof(self, p):
+        if not getattr(self, 'profile_macs', False):
+            return
         if getattr(self, 't_dec', None) is None:
             return
         if p.is_cuda:

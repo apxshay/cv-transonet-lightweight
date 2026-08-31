@@ -14,6 +14,7 @@ from src import config
 from src.checkpoints import CheckpointIO
 from src.utils.io import export_pointcloud
 from src.utils.visualize import visualize_data
+from src.utils.others import print_profile_row
 #from thop import profile, clever_format
 
 parser = argparse.ArgumentParser(
@@ -238,3 +239,42 @@ print('Per-class timings: %s' % out_time_file_class)
 time_df_class.loc['mean'] = time_df_class.mean()
 print('Raw timings by class [s] (includes warm-up/startup):')
 print(time_df_class)
+
+# Step 0 summary: decoder calls, query split, µs/1k queries (drop first 3 warm-ups)
+_step0_cols = [
+    'n_decoder_calls', 'n_queries', 'n_query_chunks',
+    'time (decode)', 'time (mise)', 'time (host transfer)',
+    'time (eval points)', 'us_per_1k_queries', 'mesh',
+]
+if all(col in time_df.columns for col in _step0_cols):
+    step0_df = time_df.iloc[3:].copy()
+    step0_mean = step0_df[_step0_cols].mean(numeric_only=True)
+    eval_sum = (
+        step0_mean['time (decode)']
+        + step0_mean['time (mise)']
+        + step0_mean['time (host transfer)']
+    )
+    mesh_mean = step0_mean['mesh']
+    print('\nSTEP 0 MEASUREMENTS (mean of samples 4-13, 3 warm-ups discarded):')
+    print('  decoder calls / mesh:     %.2f' % step0_mean['n_decoder_calls'])
+    print('  queries / mesh:           %.0f' % step0_mean['n_queries'])
+    print('  query chunks / mesh:      %.2f' % step0_mean['n_query_chunks'])
+    print('  time decode [ms]:         %.3f' % (step0_mean['time (decode)'] * 1000))
+    print('  time mise [ms]:           %.3f' % (step0_mean['time (mise)'] * 1000))
+    print('  time host transfer [ms]:  %.3f' % (step0_mean['time (host transfer)'] * 1000))
+    print('  time eval points [ms]:    %.3f' % (step0_mean['time (eval points)'] * 1000))
+    print('  split sum [ms]:           %.3f' % (eval_sum * 1000))
+    print('  us / 1k queries:          %.2f' % step0_mean['us_per_1k_queries'])
+    if mesh_mean > 0:
+        print('  decode share of mesh:     %.1f%%' % (100 * step0_mean['time (decode)'] / mesh_mean))
+        print('  mise share of mesh:       %.1f%%' % (100 * step0_mean['time (mise)'] / mesh_mean))
+        print('  transfer share of mesh:   %.1f%%' % (100 * step0_mean['time (host transfer)'] / mesh_mean))
+        print('  eval share of mesh:       %.1f%%' % (100 * step0_mean['time (eval points)'] / mesh_mean))
+        print('  throughput [meshes/s]:    %.2f' % (1.0 / mesh_mean))
+    print_profile_row(
+        'Decoder (1k queries)', step0_mean['time (decode)'] / (step0_mean['n_queries'] / 1000.0),
+        0.0, 0.0,
+        rate_override=step0_mean['us_per_1k_queries'],
+        rate_label='us/1k queries',
+        final=True,
+    )
