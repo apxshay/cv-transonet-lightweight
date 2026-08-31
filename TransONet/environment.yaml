@@ -157,6 +157,7 @@ dependencies:
       - rfc3339-validator==0.1.4
       - rfc3986-validator==0.1.1
       - scipy==1.10.0
+      - scikit-image==0.21.0
       - send2trash==1.8.0
       - six==1.16.0
       - soupsieve==2.4

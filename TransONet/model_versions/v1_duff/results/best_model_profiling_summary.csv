@@ -1,0 +1,8 @@
+block,time_ms,rate_per_second,linear_macs,notes
+Decoder call,2.675,373.85,6928768,MAC value refers to the captured decoder call and not to all MISE calls
+Encoder,6.586,151.83,231563840,
+DyViT,1.824,548.17,14008320,
+Encode total,8.893,112.45,,
+Evaluate points,97.519,10.25,,Includes MISE and repeated decoder calls
+Marching Cubes,18.719,53.42,,Lewiner implementation
+Full generation,128.051,7.81,,
