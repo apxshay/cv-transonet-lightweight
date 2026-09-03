@@ -183,6 +183,7 @@ class Generator3D(object):
             values = self.eval_points(pointsf, z, c, **kwargs).cpu().numpy()
             value_grid = values.reshape(nx, nx, nx)
         else:
+            t_mise = time.perf_counter()
             mesh_extractor = MISE(
                 self.resolution0, self.upsampling_steps, threshold)
 
@@ -190,14 +191,25 @@ class Generator3D(object):
             stats_dict.setdefault('n_queries', 0)
             stats_dict.setdefault('n_query_chunks', 0)
             stats_dict.setdefault('time (decode)', 0.0)
-            stats_dict.setdefault('time (mise)', 0.0)
             stats_dict.setdefault('time (host transfer)', 0.0)
+            stats_dict['mise iterations'] = 0
+            stats_dict['mise max query points'] = 0
+            stats_dict['time (mise init)'] = time.perf_counter() - t_mise
+            stats_dict['time (mise query)'] = 0.0
+            stats_dict['time (mise update)'] = 0.0
+            stats_dict['time (mise dense)'] = 0.0
+            stats_dict['time (mise)'] = stats_dict['time (mise init)']
 
-            t_mise = time.time()
+            t_mise = time.perf_counter()
             points = mesh_extractor.query()
-            stats_dict['time (mise)'] += time.time() - t_mise
+            dt_mise = time.perf_counter() - t_mise
+            stats_dict['time (mise query)'] += dt_mise
+            stats_dict['time (mise)'] += dt_mise
 
             while points.shape[0] != 0:
+                stats_dict['mise iterations'] += 1
+                stats_dict['mise max query points'] = max(
+                    stats_dict['mise max query points'], points.shape[0])
                 t_transfer = time.time()
                 pointsf = torch.FloatTensor(points).to(self.device)
                 # Normalize to bounding box
@@ -213,17 +225,23 @@ class Generator3D(object):
                 values = values.astype(np.float64)
                 stats_dict['time (host transfer)'] += time.time() - t_transfer
 
-                t_mise = time.time()
+                t_mise = time.perf_counter()
                 mesh_extractor.update(points, values)
-                stats_dict['time (mise)'] += time.time() - t_mise
+                dt_mise = time.perf_counter() - t_mise
+                stats_dict['time (mise update)'] += dt_mise
+                stats_dict['time (mise)'] += dt_mise
 
-                t_mise = time.time()
+                t_mise = time.perf_counter()
                 points = mesh_extractor.query()
-                stats_dict['time (mise)'] += time.time() - t_mise
+                dt_mise = time.perf_counter() - t_mise
+                stats_dict['time (mise query)'] += dt_mise
+                stats_dict['time (mise)'] += dt_mise
 
-            t_mise = time.time()
+            t_mise = time.perf_counter()
             value_grid = mesh_extractor.to_dense()
-            stats_dict['time (mise)'] += time.time() - t_mise
+            stats_dict['time (mise dense)'] = time.perf_counter() - t_mise
+            stats_dict['time (mise)'] += stats_dict['time (mise dense)']
+            stats_dict.update(mesh_extractor.get_profile())
 
             if stats_dict['n_queries'] > 0:
                 stats_dict['us_per_1k_queries'] = (

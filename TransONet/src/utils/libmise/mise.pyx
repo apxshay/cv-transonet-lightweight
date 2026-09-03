@@ -1,10 +1,10 @@
 # distutils: language = c++
 cimport cython
-from cython.operator cimport dereference as dref
 from libcpp.vector cimport vector
-from libcpp.map cimport map
+from libcpp.algorithm cimport sort
 from libc.math cimport isnan, NAN
 import numpy as np
+import time
 
 
 cdef struct Vector3D:
@@ -15,6 +15,9 @@ cdef struct Voxel:
     Vector3D loc
     unsigned int level
     bint is_leaf
+    bint positive
+    bint negative
+    bint queued
     unsigned long children[2][2][2]
 
 
@@ -33,12 +36,17 @@ cdef inline unsigned long vec_to_idx(Vector3D coord, long resolution):
 cdef class MISE:
     cdef vector[Voxel] voxels
     cdef vector[GridPoint] grid_points
-    cdef map[long, long] grid_point_hash
+    cdef vector[int] grid_point_hash
+    cdef vector[long] active_voxels
     cdef readonly int resolution_0
     cdef readonly int depth
     cdef readonly double threshold
     cdef readonly int voxel_size_0
     cdef readonly int resolution
+    cdef double time_set_values, time_subdivide
+    cdef double time_dense_alloc, time_dense_write, time_dense_fill
+    cdef long n_subdivided
+    cdef vector[long] subdivisions_by_level
 
     def __cinit__(self, int resolution_0, int depth, double threshold):
         self.resolution_0 = resolution_0
@@ -46,6 +54,9 @@ cdef class MISE:
         self.threshold = threshold
         self.voxel_size_0 = (1 << depth)
         self.resolution = resolution_0 * self.voxel_size_0
+        self.subdivisions_by_level.resize(depth + 1, 0)
+        self.grid_point_hash.resize(
+            (self.resolution + 1) * (self.resolution + 1) * (self.resolution + 1), -1)
 
         # Create initial voxels
         self.voxels.reserve(resolution_0 * resolution_0 * resolution_0)
@@ -66,6 +77,9 @@ cdef class MISE:
                         loc=loc,
                         level=0,
                         is_leaf=True,
+                        positive=False,
+                        negative=False,
+                        queued=False,
                     )
 
                     assert(self.voxels.size() == vec_to_idx(Vector3D(i, j, k), resolution_0))
@@ -88,9 +102,10 @@ cdef class MISE:
         """Update points and set their values. Also determine all active voxels and subdivide them."""
         assert(points.shape[0] == values.shape[0])
         assert(points.shape[1] == 3)
-        cdef Vector3D loc
+        cdef Vector3D loc, adj_loc
         cdef long idx
-        cdef int i
+        cdef int i, j, k, l
+        cdef double t0 = time.perf_counter()
 
         # Find all indices of point and set value
         for i in range(points.shape[0]):
@@ -100,8 +115,16 @@ cdef class MISE:
                 raise ValueError('Point not in grid!')
             self.grid_points[idx].value = values[i]
             self.grid_points[idx].known = True
+            for j in range(-1, 1):
+                for k in range(-1, 1):
+                    for l in range(-1, 1):
+                        adj_loc = Vector3D(loc.x + j, loc.y + k, loc.z + l)
+                        self.mark_voxel(self.get_voxel_idx(adj_loc), values[i])
+        self.time_set_values += time.perf_counter() - t0
         # Subdivide activate voxels and add new points
+        t0 = time.perf_counter()
         self.subdivide_voxels()
+        self.time_subdivide += time.perf_counter() - t0
 
     def query(self):
         """Query points to evaluate."""
@@ -129,17 +152,22 @@ cdef class MISE:
 
     def to_dense(self):
         """Output dense matrix at highest resolution."""
+        cdef double t0 = time.perf_counter()
         out_array = np.full((self.resolution + 1,) * 3, np.nan)
+        self.time_dense_alloc += time.perf_counter() - t0
         cdef double[:, :, :] out_view = out_array
         cdef GridPoint point
         cdef int i, j, k
         
+        t0 = time.perf_counter()
         for point in self.grid_points:
             # Take voxel for which points is upper left corner
             # assert(point.known)
             out_view[point.loc.x, point.loc.y, point.loc.z] = point.value
+        self.time_dense_write += time.perf_counter() - t0
 
         # Complete along x axis
+        t0 = time.perf_counter()
         for i in range(1, self.resolution + 1):
             for j in range(self.resolution + 1):
                 for k in range(self.resolution + 1):
@@ -161,7 +189,24 @@ cdef class MISE:
                     if isnan(out_view[i, j, k]):
                         out_view[i, j, k] = out_view[i, j, k-1]
                     assert(not isnan(out_view[i, j, k]))
+        self.time_dense_fill += time.perf_counter() - t0
         return out_array
+
+    def get_profile(self):
+        result = {
+            'time (mise assign values)': self.time_set_values,
+            'time (mise subdivide)': self.time_subdivide,
+            'time (mise dense alloc)': self.time_dense_alloc,
+            'time (mise dense write)': self.time_dense_write,
+            'time (mise dense fill)': self.time_dense_fill,
+            'mise grid points': self.grid_points.size(),
+            'mise voxels': self.voxels.size(),
+            'mise subdivisions': self.n_subdivided,
+            'mise dense mb': (self.resolution + 1) ** 3 * 8 / 1e6,
+        }
+        for level in range(1, self.depth + 1):
+            result['mise subdivisions level %d' % level] = self.subdivisions_by_level[level]
+        return result
 
     def get_points(self):
         points_np = np.zeros((self.grid_points.size(), 3), dtype=np.int64)
@@ -182,56 +227,17 @@ cdef class MISE:
         return points_np, values_np
 
     cdef void subdivide_voxels(self) except +:
-        cdef vector[bint] next_to_positive
-        cdef vector[bint] next_to_negative
-        cdef int i, j, k
+        cdef vector[long] candidates
         cdef long idx
-        cdef Vector3D loc, adj_loc
 
-        # Initialize vectors
-        next_to_positive.resize(self.voxels.size(), False)
-        next_to_negative.resize(self.voxels.size(), False)
-    
-        # Iterate over grid points and mark voxels active
-        # TODO: can move this to update operation and add attibute to voxel
-        for grid_point in self.grid_points:
-            loc = grid_point.loc
-            if not grid_point.known:
-                continue
-
-            # Iterate over the 8 adjacent voxels
-            for i in range(-1, 1):
-                for j in range(-1, 1):
-                    for k in range(-1, 1):
-                        adj_loc = Vector3D(
-                            x=loc.x + i,
-                            y=loc.y + j,
-                            z=loc.z + k,
-                        )
-                        idx = self.get_voxel_idx(adj_loc)
-                        if idx == -1:
-                            continue
-            
-                        if grid_point.value >= self.threshold:
-                            next_to_positive[idx] = True
-                        if grid_point.value <= self.threshold:
-                            next_to_negative[idx] = True
-
-        cdef int n_subdivide = 0
-        
-        for idx in range(self.voxels.size()):
-            if not self.voxels[idx].is_leaf or self.voxels[idx].level == self.depth:
-                continue
-            if next_to_positive[idx] and next_to_negative[idx]:
-                n_subdivide += 1
-
-        self.voxels.reserve(self.voxels.size() + 8 * n_subdivide)
-        self.grid_points.reserve(self.voxels.size() + 19 * n_subdivide)
-
-        for idx in range(self.voxels.size()):
-            if not self.voxels[idx].is_leaf or self.voxels[idx].level == self.depth:
-                continue
-            if next_to_positive[idx] and next_to_negative[idx]:
+        self.active_voxels.swap(candidates)
+        sort(candidates.begin(), candidates.end())
+        self.voxels.reserve(self.voxels.size() + 8 * candidates.size())
+        self.grid_points.reserve(self.voxels.size() + 19 * candidates.size())
+        for idx in candidates:
+            self.voxels[idx].queued = False
+            if (self.voxels[idx].is_leaf and self.voxels[idx].level < self.depth
+                    and self.voxels[idx].positive and self.voxels[idx].negative):
                 self.subdivide_voxel(idx)
 
     cdef void subdivide_voxel(self, long idx):
@@ -241,6 +247,8 @@ cdef class MISE:
         cdef Vector3D loc
         cdef int new_level = self.voxels[idx].level + 1
         cdef int new_size = 1 << (self.depth - new_level)
+        self.n_subdivided += 1
+        self.subdivisions_by_level[new_level] += 1
         assert(new_level <= self.depth)
         assert(1 <= new_size <= self.voxel_size_0)
 
@@ -259,11 +267,16 @@ cdef class MISE:
                     voxel = Voxel(
                         loc=loc, 
                         level=new_level,
-                        is_leaf=True
+                        is_leaf=True,
+                        positive=False,
+                        negative=False,
+                        queued=False,
                     )
 
                     self.voxels[idx].children[i][j][k] = self.voxels.size()
                     self.voxels.push_back(voxel)
+                    if new_level < self.depth:
+                        self.initialize_voxel(self.voxels.size() - 1, new_size)
 
         # Add new grid points
         for i in range(3):
@@ -353,17 +366,35 @@ cdef class MISE:
             value=0.,
             known=False,
         )
-        self.grid_point_hash[vec_to_idx(loc, self.resolution + 1)] = self.grid_points.size()
+        self.grid_point_hash[vec_to_idx(loc, self.resolution + 1)] = <int>self.grid_points.size()
         self.grid_points.push_back(point)
 
     cdef inline int get_grid_point_idx(self, Vector3D loc):
-        p_idx = self.grid_point_hash.find(vec_to_idx(loc, self.resolution + 1))
-        if p_idx == self.grid_point_hash.end():
+        cdef int idx = self.grid_point_hash[vec_to_idx(loc, self.resolution + 1)]
+        if idx == -1:
             return -1
-
-        cdef int idx = dref(p_idx).second
         assert(self.grid_points[idx].loc.x == loc.x)
         assert(self.grid_points[idx].loc.y == loc.y)
         assert(self.grid_points[idx].loc.z == loc.z)
 
         return idx
+
+    cdef inline void mark_voxel(self, long idx, double value):
+        if idx != -1 and self.voxels[idx].is_leaf and self.voxels[idx].level < self.depth:
+            self.voxels[idx].positive |= value >= self.threshold
+            self.voxels[idx].negative |= value <= self.threshold
+            if self.voxels[idx].positive and self.voxels[idx].negative and not self.voxels[idx].queued:
+                self.voxels[idx].queued = True
+                self.active_voxels.push_back(idx)
+
+    cdef void initialize_voxel(self, long idx, int voxel_size):
+        cdef int i, j, k, point_idx
+        cdef Vector3D loc0 = self.voxels[idx].loc
+        cdef Vector3D loc
+        for i in range(voxel_size + 1):
+            for j in range(voxel_size + 1):
+                for k in range(voxel_size + 1):
+                    loc = Vector3D(loc0.x + i, loc0.y + j, loc0.z + k)
+                    point_idx = self.get_grid_point_idx(loc)
+                    if point_idx != -1 and self.grid_points[point_idx].known:
+                        self.mark_voxel(idx, self.grid_points[point_idx].value)

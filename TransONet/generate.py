@@ -248,7 +248,7 @@ _step0_cols = [
 ]
 if all(col in time_df.columns for col in _step0_cols):
     step0_df = time_df.iloc[3:].copy()
-    step0_mean = step0_df[_step0_cols].mean(numeric_only=True)
+    step0_mean = step0_df.mean(numeric_only=True)
     eval_sum = (
         step0_mean['time (decode)']
         + step0_mean['time (mise)']
@@ -278,3 +278,20 @@ if all(col in time_df.columns for col in _step0_cols):
         rate_label='us/1k queries',
         final=True,
     )
+
+    _mise_times = [
+        'time (mise init)', 'time (mise query)', 'time (mise update)',
+        'time (mise assign values)', 'time (mise subdivide)',
+        'time (mise dense)', 'time (mise dense alloc)',
+        'time (mise dense write)', 'time (mise dense fill)',
+    ]
+    if all(col in step0_mean for col in _mise_times):
+        print('\nMISE DETAIL (mean of samples 4-13):')
+        for col in _mise_times:
+            print('  %-30s %8.3f ms' % (col[6:-1] + ':', step0_mean[col] * 1000))
+        for col in ['mise iterations', 'mise max query points', 'mise grid points',
+                    'mise voxels', 'mise subdivisions', 'mise dense mb']:
+            print('  %-30s %8.2f' % (col + ':', step0_mean[col]))
+        for col in sorted(c for c in step0_mean.index
+                          if str(c).startswith('mise subdivisions level')):
+            print('  %-30s %8.2f' % (col + ':', step0_mean[col]))

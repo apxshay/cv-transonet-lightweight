@@ -76,3 +76,5 @@ TransONet/src/utils/**/build/
 # Local model-version notes
 TransONet/model_versions/README.md
 TransONet/model_versions/*/README.md
+
+TransONet/tmp
