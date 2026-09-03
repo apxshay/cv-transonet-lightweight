@@ -325,41 +325,31 @@ def normalize_coordinate(p, padding=0.1, plane='xz'):
     xy_new = xy / (1 + padding + 10e-6) # make coordinate back to (-0.5, 0.5)
     xy_new = xy_new + 0.5 # range (0, 1)
 
-    # There are some outliers out of the range of (0, 1)
-    if xy_new.max() >= 1:
-        xy_new[xy_new >= 1] = 1 - 10e-6
-    if xy_new.min() < 0:
-        xy_new[xy_new < 0] = 0.0
+    # clip outliers to (0, 1)
+    xy_new = torch.clamp(xy_new, 0.0, 1.0 - 1e-5)
     return xy_new
 
-def normalize_dynamic_plane_coordinate(p, change_basis_matrix_normalizer, padding=0.1):
-    device = 'cuda' if (torch.cuda.is_available() == True) else 'cpu'
-    #print(device)
-    #device = 'cpu'
-    #print('normalize'+ device)   
-    change_basis_matrix = change_basis_matrix_normalizer[:,:3]
-    normalizer = (change_basis_matrix_normalizer[:,3,0] + 0.05).to(device)
+def normalize_dynamic_plane_coordinate(p, change_basis_matrix_normalizer=None, padding=0.1,
+                                       change_basis_matrix=None, normalizer=None):
+    if change_basis_matrix is None:
+        device = p.device
+        change_basis_matrix = change_basis_matrix_normalizer[:, :3].to(device)
+        normalizer = (change_basis_matrix_normalizer[:, 3, 0] + 0.05).to(device)
 
-    max_dim = (1.0 + padding)/2
-    p = torch.div(p, max_dim).to(device) # range (-1.0, 1.0)
+    max_dim = (1.0 + padding) / 2
+    p = p / max_dim
 
-    p = torch.transpose(p, 2, 1)
-    p = torch.bmm(change_basis_matrix.to(device), p)
-    p = torch.transpose(p, 2, 1)
+    p = p.transpose(2, 1).contiguous()
+    p = torch.bmm(change_basis_matrix, p)
+    p = p.transpose(2, 1)
 
     p = p / normalizer.unsqueeze(1).unsqueeze(2) # range (-1.0, 1.0)
     xy = p[:, :, [0, 1]]
     xy_new = xy / 2 # make coordinate back to (-0.5, 0.5)
     xy_new = xy_new + 0.5  # range (0, 1)
 
-    #xy_new = xy / (1 + padding + 10e-6) # make coordinate back to (-0.5, 0.5)
-    #xy_new = xy_new + 0.5 # range (0, 1)
-
-    # There are some outliers out of the range of (0, 1)
-    if xy_new.max() >= 1:
-        xy_new[xy_new >= 1] = 1 - 10e-6
-    if xy_new.min() < 0:
-        xy_new[xy_new < 0] = 0.0
+    # clip outliers to (0, 1)
+    xy_new = torch.clamp(xy_new, 0.0, 1.0 - 1e-5)
     return xy_new
 
 def normalize_3d_coordinate(p, padding=0.1):

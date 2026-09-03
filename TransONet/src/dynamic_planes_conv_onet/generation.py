@@ -55,6 +55,15 @@ class Generator3D(object):
         self.simplify_nfaces = simplify_nfaces
         self.optimizer = optimizer
 
+    def _decode_kwargs(self, c, kwargs):
+        '''Hoist plane basis to device once per mesh (F4).'''
+        out = dict(kwargs)
+        if c is not None and isinstance(c, dict) and 'c_mat' in c:
+            c_mat = c['c_mat'].to(self.device)
+            out['basis_matrix'] = c_mat[:, :3]
+            out['basis_normalizer'] = c_mat[:, 3, 0] + 0.05
+        return out
+
     def generate_mesh(self, data, return_stats=True):
         ''' Generates the output mesh.
 
@@ -169,6 +178,7 @@ class Generator3D(object):
         threshold = np.log(self.threshold) - np.log(1. - self.threshold)
 
         t0 = time.time()
+        kwargs = self._decode_kwargs(c, kwargs)
         # profiling: generate_eval (start)
         self.start_gen_eval_prof(z)
         # Compute bounding box size
@@ -210,7 +220,6 @@ class Generator3D(object):
 
                 t_transfer = time.time()
                 values = values.cpu().numpy()
-                values = values.astype(np.float64)
                 stats_dict['time (host transfer)'] += time.time() - t_transfer
 
                 t_mise = time.time()
@@ -250,6 +259,7 @@ class Generator3D(object):
         '''
         threshold = np.log(self.threshold) - np.log(1. - self.threshold)
         t0 = time.time()
+        kwargs = self._decode_kwargs(c, kwargs)
         # Compute bounding box size
         box_size = 1 + self.padding
         # Shortcut
@@ -275,7 +285,6 @@ class Generator3D(object):
                 # Evaluate model and update
                 values = self.eval_points(	
                     pointsf, z, c, **kwargs).cpu().numpy()
-                values = values.astype(np.float64)
                 mesh_extractor.update(points, values)
                 points = mesh_extractor.query()
             value_grid = mesh_extractor.to_dense()
@@ -585,6 +594,7 @@ class Generator3D(object):
         threshold = np.log(self.threshold) - np.log(1. - self.threshold)
 
         t0 = time.time()
+        kwargs = self._decode_kwargs(c, kwargs)
         # Compute bounding box size
         box_size = 1 + self.padding
 
@@ -611,7 +621,6 @@ class Generator3D(object):
                 # Evaluate model and update
                 values = self.eval_points(
                     pointsf, z, c, **kwargs).cpu().numpy()
-                values = values.astype(np.float64)
                 mesh_extractor.update(points, values)
                 points = mesh_extractor.query()
 

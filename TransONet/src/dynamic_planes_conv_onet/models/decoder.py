@@ -79,14 +79,19 @@ class DynamicLocalDecoder(nn.Module):
 
     def sample_plane_feature(self, p, c, plane='xz'):
         xy = normalize_coordinate(p.clone(), plane=plane, padding=self.padding) # normalize to the range of (0, 1)
-        xy = xy[:, :, None].float()
+        xy = xy.unsqueeze(-1)
         vgrid = 2.0 * xy - 1.0 # normalize to (-1, 1)
         c = F.grid_sample(c, vgrid, padding_mode='border', align_corners=True, mode=self.sample_mode).squeeze(-1)
         return c
 
-    def sample_dynamic_plane_feature(self, p, c, basis_normalizer_matrix):
-        xy = normalize_dynamic_plane_coordinate(p.clone(), basis_normalizer_matrix, padding=self.padding) # normalize to the range of (0, 1)
-        xy = xy[:, :, None].float()
+    def sample_dynamic_plane_feature(self, p, c, basis_matrix, normalizer=None):
+        if normalizer is not None:
+            xy = normalize_dynamic_plane_coordinate(
+                p, padding=self.padding,
+                change_basis_matrix=basis_matrix, normalizer=normalizer)
+        else:
+            xy = normalize_dynamic_plane_coordinate(p, basis_matrix, padding=self.padding)
+        xy = xy.unsqueeze(-1)
         vgrid = 2.0 * xy - 1.0 # normalize to (-1, 1)
         c = F.grid_sample(c, vgrid, padding_mode='border', align_corners=True, mode=self.sample_mode).squeeze(-1)
         return c
@@ -123,7 +128,7 @@ class DynamicLocalDecoder(nn.Module):
             for l in range(num_planes):
                 z += self.sample_dynamic_plane_feature(p, z_plane['plane{}'.format(l)], z_plane['c_mat'][:,l])
 
-            z = z.transpose(1, 2)
+            z = z.transpose(1, 2).contiguous()
 
         if self.c_dim != 0:
             c = 0
@@ -133,10 +138,16 @@ class DynamicLocalDecoder(nn.Module):
 
             # for l in range(num_planes):
             #     c += self.sample_dynamic_plane_feature(p, c_plane['plane{}'.format(l)], c_plane['c_mat'][:,l])
-            c+= self.sample_dynamic_plane_feature(p, c_plane['planes'], c_plane['c_mat'])
-            c = c.transpose(1, 2)
+            basis_matrix = kwargs.get('basis_matrix')
+            basis_normalizer = kwargs.get('basis_normalizer')
+            if basis_matrix is not None:
+                c += self.sample_dynamic_plane_feature(
+                    p, c_plane['planes'], basis_matrix, basis_normalizer)
+            else:
+                c += self.sample_dynamic_plane_feature(
+                    p, c_plane['planes'], c_plane['c_mat'])
+            c = c.transpose(1, 2).contiguous()
 
-        p = p.float()
         ##################
         if self.pos_encoding:
             p = self.pe(p)

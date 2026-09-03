@@ -3,7 +3,6 @@ cimport cython
 from cython.operator cimport dereference as dref
 from libcpp.vector cimport vector
 from libcpp.map cimport map
-from libc.math cimport isnan, NAN
 import numpy as np
 
 
@@ -84,7 +83,7 @@ cdef class MISE:
                     assert(self.grid_points.size() == vec_to_idx(Vector3D(i, j, k), resolution_0 + 1))
                     self.add_grid_point(loc)
 
-    def update(self, long[:, :] points, double[:] values):
+    def update(self, long[:, :] points, float[:] values):
         """Update points and set their values. Also determine all active voxels and subdivide them."""
         assert(points.shape[0] == values.shape[0])
         assert(points.shape[1] == 3)
@@ -105,14 +104,9 @@ cdef class MISE:
 
     def query(self):
         """Query points to evaluate."""
-        # Find all points with unknown value
         cdef vector[Vector3D] points
-        cdef int n_unknown = 0
-        for p in self.grid_points:
-            if not p.known:
-                n_unknown += 1 
+        cdef GridPoint p
 
-        points.reserve(n_unknown)
         for p in self.grid_points:
             if not p.known:
                 points.push_back(p.loc)
@@ -129,38 +123,32 @@ cdef class MISE:
 
     def to_dense(self):
         """Output dense matrix at highest resolution."""
-        out_array = np.full((self.resolution + 1,) * 3, np.nan)
-        cdef double[:, :, :] out_view = out_array
+        out_array = np.full((self.resolution + 1,) * 3, np.nan, dtype=np.float32)
+        cdef float[:, :, :] out_view = out_array
         cdef GridPoint point
-        cdef int i, j, k
-        
+
         for point in self.grid_points:
-            # Take voxel for which points is upper left corner
-            # assert(point.known)
             out_view[point.loc.x, point.loc.y, point.loc.z] = point.value
 
-        # Complete along x axis
-        for i in range(1, self.resolution + 1):
-            for j in range(self.resolution + 1):
-                for k in range(self.resolution + 1):
-                    if isnan(out_view[i, j, k]):
-                        out_view[i, j, k] = out_view[i-1, j, k]
+        res = self.resolution + 1
+        for i in range(1, res):
+            layer = out_array[i]
+            prev = out_array[i - 1]
+            nan_mask = np.isnan(layer)
+            layer[nan_mask] = prev[nan_mask]
 
-        # Complete along y axis
-        for i in range(self.resolution + 1):
-            for j in range(1, self.resolution + 1):
-                for k in range(self.resolution + 1):
-                    if isnan(out_view[i, j, k]):
-                        out_view[i, j, k] = out_view[i, j-1, k]
+        for j in range(1, res):
+            layer = out_array[:, j, :]
+            prev = out_array[:, j - 1, :]
+            nan_mask = np.isnan(layer)
+            layer[nan_mask] = prev[nan_mask]
 
+        for k in range(1, res):
+            layer = out_array[:, :, k]
+            prev = out_array[:, :, k - 1]
+            nan_mask = np.isnan(layer)
+            layer[nan_mask] = prev[nan_mask]
 
-        # Complete along z axis
-        for i in range(self.resolution + 1):
-            for j in range(self.resolution + 1):
-                for k in range(1, self.resolution + 1):
-                    if isnan(out_view[i, j, k]):
-                        out_view[i, j, k] = out_view[i, j, k-1]
-                    assert(not isnan(out_view[i, j, k]))
         return out_array
 
     def get_points(self):
