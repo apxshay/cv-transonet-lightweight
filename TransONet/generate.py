@@ -28,6 +28,13 @@ cfg = config.load_config(args.config, 'configs/default.yaml')
 is_cuda = (torch.cuda.is_available() and not args.no_cuda)
 device = torch.device("cuda" if is_cuda else "cpu")
 print('Device: %s' % device)
+
+seed = cfg.get('random_seed')
+if seed is not None:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if is_cuda:
+        torch.cuda.manual_seed_all(seed)
 out_dir = cfg['training']['out_dir']
 generation_dir = os.path.join(out_dir, cfg['generation']['generation_dir'])
 out_time_file = os.path.join(generation_dir, 'time_generation_full.csv')
@@ -45,7 +52,17 @@ dataset = config.get_dataset('test', cfg, return_idx=True)
 # The profiling run needs one sample per category, not a full pass over every
 # test object. This keeps the measured forwards unchanged while avoiding
 # thousands of unused data loads between categories.
-if cfg.get('profiling', {}).get('one_sample_per_category', False):
+if cfg.get('profiling', {}).get('fixed_models'):
+    by_key = {(m['category'], m['model']): m for m in dataset.models}
+    picked = []
+    for item in cfg['profiling']['fixed_models']:
+        if isinstance(item, str):
+            cat, name = item.split('/', 1)
+        else:
+            cat, name = item['category'], item['model']
+        picked.append(by_key[(str(cat), str(name))])
+    dataset.models = picked
+elif cfg.get('profiling', {}).get('one_sample_per_category', False):
     first_model_by_category = {}
     for model_dict in dataset.models:
         category = model_dict['category']

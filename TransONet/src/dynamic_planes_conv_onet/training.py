@@ -208,36 +208,23 @@ class Trainer(BaseTrainer):
 
         semantic_map = data.get('semantic_map', None)
         pl = None
-        plane_loss = None
         if semantic_map is not None:
             c = self.model.encoder(semantic_map.to(device))
         else:
-            c, plane_loss = self.model.encode_inputs(inputs, self.optimizer)
-            #c, plane_loss = self.model.encode_inputs(inputs)
-
+            c = self.model.encode_inputs(inputs, self.optimizer)
             if hasattr(self.model.encoder, 'plane_parameters'):
-                #print('pl')
                 pl = self.model.encoder.plane_parameters
 
-
         kwargs = {}
-
         q_z = self.model.infer_z(p, occ, c, inputs=inputs, **kwargs)
         z = q_z.rsample()
 
-        # KL-divergence
-        batch_size = p.shape[0]
-        kl = dist.kl_divergence(q_z, self.model.p0_z).view(batch_size, -1).sum(dim=-1)
-        loss = kl.mean()
-
         logits = self.model.decode(p, z, c, **kwargs).logits
         loss_i = F.binary_cross_entropy_with_logits(logits, occ, reduction='none')
-        if (cfg['training']['similarity']):
+        loss = loss_i.sum(-1).mean()
+        if (cfg['training']['similarity']) and pl is not None:
             triplet_loss_normals = self.triplet_loss_normals(pl)
-            plane_loss = plane_loss.clone()
-            loss = loss * self.beta_vae + loss_i.sum(-1).mean() + 10 * triplet_loss_normals.sum(-1).mean() + plane_loss
-        else:
-            loss = loss_i.sum(-1).mean()
+            loss = loss + 10 * triplet_loss_normals.sum(-1).mean()
         return loss
 
     def rotate_points(self, pointcloud_model, DEGREES = 0, query_points = False, use_rotation_tensor = False, save_rotation_tensor = False):

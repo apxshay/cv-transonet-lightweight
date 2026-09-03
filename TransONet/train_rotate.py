@@ -107,7 +107,7 @@ for i in range(len(vis_loader)):
 model = config.get_model(cfg, device=device, dataset=train_dataset)
 
 # Intialize training
-optimizer = optim.Adam(model.parameters(), lr=1e-4)
+optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=1e-4)
 trainer = config.get_trainer(model, optimizer, cfg, device=device)
 
 checkpoint_io = CheckpointIO(out_dir, model=model, optimizer=optimizer)

@@ -36,7 +36,7 @@ class DynamicPlanesConvolutionalOccupancyNetwork(nn.Module):
         self._device = device
         self.p0_z = p0_z
 
-    def forward(self, p, inputs, optimizer, sample=True, semantic_map=None, **kwargs):
+    def forward(self, p, inputs, optimizer=None, sample=True, semantic_map=None, **kwargs):
         ''' Performs a forward pass through the network.
 
         Args:
@@ -45,20 +45,15 @@ class DynamicPlanesConvolutionalOccupancyNetwork(nn.Module):
             sample (bool): whether to sample for z
         '''
         batch_size = p.size(0)
-        pl = None
-        fea_loss = None
         if semantic_map is not None:
             c = self.encoder(semantic_map.to(self._device))
         else:
-
             c = self.encode_inputs(inputs, optimizer)
-            if hasattr(self.encoder, 'plane_parameters'):
-                pl = self.encoder.plane_parameters
         z = self.get_z_from_prior((batch_size,), sample=sample)
         p_r = self.decode(p, z, c, **kwargs)
         return p_r
 
-    def compute_elbo(self, p, occ, inputs, semantic_map, optimizer, **kwargs):
+    def compute_elbo(self, p, occ, inputs, semantic_map, optimizer=None, **kwargs):
         ''' Computes the expectation lower bound.
 
         Args:
@@ -70,13 +65,9 @@ class DynamicPlanesConvolutionalOccupancyNetwork(nn.Module):
 
 
         if semantic_map is not None:
-            #c, _ = self.encoder(semantic_map.to(self._device))
             c = self.encoder(semantic_map.to(self._device))
         else:
-            #c, _ = self.encode_inputs(inputs)
             c = self.encode_inputs(inputs, optimizer)
-            if hasattr(self.encoder, 'plane_parameters'):
-                pl = self.encoder.plane_parameters
         q_z = self.infer_z(p, occ, c, inputs=inputs, **kwargs)
         z = q_z.rsample()
         p_r = self.decode(p, z, c, **kwargs)
@@ -87,7 +78,7 @@ class DynamicPlanesConvolutionalOccupancyNetwork(nn.Module):
 
         return elbo, rec_error, kl
 
-    def encode_inputs(self, inputs, optimizer):
+    def encode_inputs(self, inputs, optimizer=None):
         ''' Encodes the input.
 
         Args:
@@ -95,12 +86,10 @@ class DynamicPlanesConvolutionalOccupancyNetwork(nn.Module):
         '''
 
         if self.encoder is not None:
-            #c, fea_loss = self.encoder(inputs)
             c = self.encoder(inputs, optimizer)
         else:
-            # Return inputs?
             c = torch.empty(inputs.size(0), 0)
-        return c#, fea_loss
+        return c
 
     def decode(self, p, z, c, **kwargs):
         ''' Returns occupancy probabilities for the sampled points.

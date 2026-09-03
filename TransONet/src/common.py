@@ -5,7 +5,7 @@ import math
 import pdb
 
 
-def ChangeBasis(plane_parameters, device='cuda'):
+def ChangeBasis(plane_parameters, device=None):
     '''
     C_mat is stacked matrices of:
     1. Change of basis matrices (batch_size x L x 3 x 3)
@@ -16,8 +16,14 @@ def ChangeBasis(plane_parameters, device='cuda'):
     Output:
             C_mat (tensor) : (batch_size x L x 4 x 3)
     '''
+    if device is None:
+        device = plane_parameters.device
     batch_size, L, _ = plane_parameters.size()
     n = plane_parameters.reshape([batch_size * L, 3]).float().to(device)
+    n_norm = torch.norm(n, p=2, dim=1).view(batch_size * L, 1)
+    fallback = torch.zeros_like(n)
+    fallback[:, 2] = 1.0
+    n = torch.where(n_norm < 1e-6, fallback, n)
     n = n / torch.norm(n, p=2, dim=1).view(batch_size * L, 1).clamp(min=1e-8)
 
     nx = n[:, 0]
@@ -333,18 +339,15 @@ def normalize_coordinate(p, padding=0.1, plane='xz'):
     return xy_new
 
 def normalize_dynamic_plane_coordinate(p, change_basis_matrix_normalizer, padding=0.1):
-    device = 'cuda' if (torch.cuda.is_available() == True) else 'cpu'
-    #print(device)
-    #device = 'cpu'
-    #print('normalize'+ device)   
-    change_basis_matrix = change_basis_matrix_normalizer[:,:3]
+    device = p.device
+    change_basis_matrix = change_basis_matrix_normalizer[:,:3].to(device)
     normalizer = (change_basis_matrix_normalizer[:,3,0] + 0.05).to(device)
 
     max_dim = (1.0 + padding)/2
-    p = torch.div(p, max_dim).to(device) # range (-1.0, 1.0)
+    p = torch.div(p, max_dim) # range (-1.0, 1.0)
 
     p = torch.transpose(p, 2, 1)
-    p = torch.bmm(change_basis_matrix.to(device), p)
+    p = torch.bmm(change_basis_matrix, p)
     p = torch.transpose(p, 2, 1)
 
     p = p / normalizer.unsqueeze(1).unsqueeze(2) # range (-1.0, 1.0)

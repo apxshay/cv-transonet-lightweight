@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from src.layers import ResnetBlockFC, FCPlanenet
 from torch_scatter import scatter_mean, scatter_max
 from src.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate, positional_encoding, \
@@ -89,12 +90,12 @@ class DynamicLocalPoolPointnet(nn.Module):
             img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
             num_heads=8, mlp_ratio=4, qkv_bias=True,
             pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0
-        ).cuda()
+        )
 
         self.loss_dvit = torch.nn.CrossEntropyLoss()
         self.teacher_model = VisionTransformerTeacher(
             img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
-            num_heads=8, mlp_ratio=4, qkv_bias=True).cuda()
+            num_heads=8, mlp_ratio=4, qkv_bias=True)
 
         self.criterion = torch.nn.CrossEntropyLoss()
 
@@ -102,6 +103,13 @@ class DynamicLocalPoolPointnet(nn.Module):
             self.teacher_model, self.criterion, clf_weight=0.0, keep_ratio=self.KEEP_RATE, mse_token=True,
             ratio_weight=2.0, distill_weight=0.5, dynamic=True
         )
+        # teacher / score heads stay in the module for old checkpoints
+        self.transformer.distill = False
+        self.transformer.pruning_loc = []
+        self.transformer.token_ratio = [1.0]
+        self.teacher_model.eval()
+        for par in list(self.teacher_model.parameters()) + list(self.transformer.score_predictor.parameters()):
+            par.requires_grad = False
 
         if scatter_type == 'max':
             self.scatter = scatter_max
@@ -114,55 +122,40 @@ class DynamicLocalPoolPointnet(nn.Module):
         if pos_encoding:
             self.pe = positional_encoding()
 
-    def generate_dynamic_plane_features(self, p, c, normal_feature, basis_normalizer_matrix):
-        # acquire indices of features in plane
-
-        xy = normalize_dynamic_plane_coordinate(p.clone(), basis_normalizer_matrix,
-                                                padding=self.padding)  # normalize to the range of (0, 1)
-        index = coordinate2index(xy, self.reso_plane)
-
-        # scatter plane features from points
-        fea_plane = c.new_zeros(p.size(0), self.c_dim, self.reso_plane ** 2)
-
-        c = c.permute(0, 2, 1)  # B x 512 x T
-        c = c + normal_feature.unsqueeze(2)
-        fea_plane = scatter_mean(c, index, out=fea_plane)  # B x 512 x reso^2
-        fea_plane = fea_plane.reshape(p.size(0), self.c_dim, self.reso_plane,
-                                      self.reso_plane)  # sparce matrix (B x 512 x reso x reso)
-
-        loss_dvit = None
-        fea_plane_before = fea_plane
-
-        # profiling: encoder (end)
+    def generate_dynamic_plane_features(self, p, c, normal_fea_hdim, C_mat):
+        B, L = p.size(0), C_mat.size(1)
+        c = c.permute(0, 2, 1)
+        planes = []
+        for l in range(L):
+            xy = normalize_dynamic_plane_coordinate(
+                p.clone(), C_mat[:, l], padding=self.padding)
+            index = coordinate2index(xy, self.reso_plane)
+            fea = c.new_zeros(B, self.c_dim, self.reso_plane ** 2)
+            fea = scatter_mean(
+                c + normal_fea_hdim['plane{}'.format(l)].unsqueeze(2),
+                index, out=fea)
+            planes.append(fea.view(B, self.c_dim, self.reso_plane, self.reso_plane))
+        planes = torch.stack(planes, dim=1)
         self.end_enc_prof(p)
 
-        if self.training:
-            B, H, W, C = fea_plane.shape
-            # profiling: dyvit (start)
-            self.start_dyvit_prof(p)
-            fea_plane, token_pred, mask, out_pred_score = self.transformer(fea_plane)
-            # profiling: dyvit (end)
-            self.end_dyvit_prof(p)
+        # mix each plane separately (checkpoint in train, otherwise OOM at B=128)
+        self.start_dyvit_prof(p)
+        mixed = []
+        for l in range(L):
+            x = planes[:, l]
+            if self.training and x.requires_grad:
+                x = checkpoint(self._mix_plane, x)
+            else:
+                x = self._mix_plane(x)
+            mixed.append(x)
+        self.end_dyvit_prof(p)
+        return torch.stack(mixed, dim=1)
 
-            outputs = [fea_plane, token_pred, mask, out_pred_score]
-
-            loss_dvit, loss_dvit_part = self.criterion(fea_plane_before, outputs)
-            fea_plane = fea_plane.reshape(B, H, W, C)
-
-
-        else:
-            B, H, W, C = fea_plane.shape
-            # profiling: dyvit (start)
-            self.start_dyvit_prof(p)
-            fea_plane = self.transformer(fea_plane)
-            # profiling: dyvit (end)
-            self.end_dyvit_prof(p)
-            fea_plane = fea_plane.reshape(B, H, W, C)
-
-        if self.training:
-            return fea_plane, loss_dvit
-        else:
-            return fea_plane
+    def _mix_plane(self, x):
+        y = self.transformer(x)
+        if isinstance(y, tuple):
+            y = y[0]
+        return y.reshape(x.shape)
 
     def pool_local(self, xy, index, c):
         bs, fea_dim = c.size(0), c.size(2)
@@ -183,10 +176,9 @@ class DynamicLocalPoolPointnet(nn.Module):
             c_out += fea
         return c_out.permute(0, 2, 1)
 
-    def forward(self, p, optimizer):
+    def forward(self, p, optimizer=None):
         # print(p.size())
         batch_size, T, D = p.size()
-        self.device = 'cpu'
         self.optimizer = optimizer
         # profiling: encoder (start)
         self.start_enc_prof(p)
@@ -208,8 +200,7 @@ class DynamicLocalPoolPointnet(nn.Module):
             normal_fea_hdim['plane{}'.format(l)] = self.plane_params_hdim[l](normal_fea[l])
 
         self.plane_parameters = torch.stack(normal_fea, dim=1)  # plane parameter (batch_size x L x 3)
-        C_mat = ChangeBasis(self.plane_parameters,
-                            device=self.device)  # change of basis and normalizer matrix (concatenated)
+        C_mat = ChangeBasis(self.plane_parameters, device=p.device)
         num_planes = C_mat.size()[1]
 
         # acquire the index for each point
@@ -217,9 +208,10 @@ class DynamicLocalPoolPointnet(nn.Module):
         index = {}
 
         for l in range(num_planes):
-            coord['plane{}'.format(l)] = normalize_dynamic_plane_coordinate(p.clone(), C_mat[:, l],
-                                                                            padding=self.padding)
-            index['plane{}'.format(l)] = coordinate2index(coord['plane{}'.format(l)], self.reso_plane)
+            coord['plane{}'.format(l)] = normalize_dynamic_plane_coordinate(
+                p.clone(), C_mat[:, l], padding=self.padding)
+            index['plane{}'.format(l)] = coordinate2index(
+                coord['plane{}'.format(l)], self.reso_plane)
 
         net = self.blocks[0](net)
         for block in self.blocks[1:]:
@@ -228,41 +220,17 @@ class DynamicLocalPoolPointnet(nn.Module):
             net = block(net)
 
         c = self.fc_c(net)
-
         fea = {}
-        fea_loss = {}
-        plane_loss = 0
-        l_0 = range(C_mat.size()[1])[1]
+        fea['planes'] = self.generate_dynamic_plane_features(p, c, normal_fea_hdim, C_mat)
+        fea['c_mat'] = C_mat
 
-        normal_fea_hdims = torch.zeros_like(normal_fea_hdim['plane{}'.format(l_0)])
-        C_mats = torch.zeros_like(C_mat[:,l_0])
+        self.plane_parameters = F.normalize(self.plane_parameters, dim=-1, eps=1e-8)
+        return fea
 
-        for l in range(C_mat.size()[1]):
-            normal_fea_hdims = normal_fea_hdims + normal_fea_hdim['plane{}'.format(l)]
-            C_mats += C_mat[:,l]
-        if self.training:
-            fea['planes'], fea_loss['planes_loss'] = self.generate_dynamic_plane_features(p, c, normal_fea_hdims, C_mats)
-            plane_loss += fea_loss['planes_loss']
-        else:
-            fea['planes'] = self.generate_dynamic_plane_features(p, c, normal_fea_hdims, C_mats)
-
-
-        fea['c_mat'] = C_mats
-
-
-        # Normalize plane params for similarity loss calculation
-        self.plane_parameters = self.plane_parameters.reshape([batch_size * num_planes, 3])
-        self.plane_parameters = self.plane_parameters / torch.norm(self.plane_parameters, p=2, dim=1).view(
-            batch_size * num_planes,
-            1)  # normalize
-        self.plane_parameters = self.plane_parameters.view(batch_size, -1)
-        self.plane_parameters = self.plane_parameters.view(batch_size, -1, 3)
-
-
-        if self.training:
-            return fea, plane_loss
-        else:
-            return fea
+    def train(self, mode=True):
+        super().train(mode)
+        self.teacher_model.eval()
+        return self
 
 
 
@@ -385,7 +353,6 @@ class DynamicLocalPoolPointnet(nn.Module):
         print_profile_row('DyViT', mean_t, mem_a, mem_r,
                           params=nparams, macs=self.dyvit_macs)
         self.dyvit_done = True
-
 
 
 

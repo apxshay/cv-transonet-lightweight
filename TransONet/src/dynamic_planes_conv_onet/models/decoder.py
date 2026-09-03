@@ -129,11 +129,13 @@ class DynamicLocalDecoder(nn.Module):
             c = 0
             # print("just c_plane", type(c_plane))
             #print("c_plane", c_plane.keys())
-            num_planes = c_plane['c_mat'].size()[1]
-
-            # for l in range(num_planes):
-            #     c += self.sample_dynamic_plane_feature(p, c_plane['plane{}'.format(l)], c_plane['c_mat'][:,l])
-            c+= self.sample_dynamic_plane_feature(p, c_plane['planes'], c_plane['c_mat'])
+            c_mat = c_plane['c_mat']
+            planes = c_plane['planes']
+            if c_mat.dim() == 4:
+                for l in range(c_mat.size(1)):
+                    c += self.sample_dynamic_plane_feature(p, planes[:, l], c_mat[:, l])
+            else:
+                c += self.sample_dynamic_plane_feature(p, planes, c_mat)
             c = c.transpose(1, 2)
 
         p = p.float()
