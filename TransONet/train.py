@@ -242,16 +242,16 @@ for epoch in range(epoch_it, max_epochs): #epoch 13 scenes
             eval_dict = trainer.evaluate(val_loader)
             metric_val = eval_dict[model_selection_metric]
             print('Validation metric (%s): %.4f'
-                  % (model_selection_metric, metric_val))
+                  % (model_selection_metric, metric_val), flush=True)
 
             for k, v in eval_dict.items():
                 logger.add_scalar('val/%s' % k, v, it)
 
             if model_selection_sign * (metric_val - metric_val_best) > 0:
                 metric_val_best = metric_val
-                print('New best model (loss %.4f)' % metric_val_best)
                 checkpoint_io.save('model_best.pt', epoch_it=epoch_it, it=it,
                                    loss_val_best=metric_val_best)
+                print('New best model (%s %.4f)' % (model_selection_metric, metric_val_best), flush=True)
 
         # Exit if necessary
         if exit_after > 0 and (time.time() - t0) >= exit_after:

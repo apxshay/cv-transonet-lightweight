@@ -1,0 +1,19 @@
+inherit_from: model_versions/v2_patch_tokens/configs/train.yaml
+
+data:
+  path: /dataset
+
+training:
+  out_dir: out/scratch/v2_patch_tokens_profile
+
+test:
+  model_file: /workspace/model_versions/v2_patch_tokens/weights/model_best.pt
+
+generation:
+  vis_n_outputs: 1
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: true
+
+profiling:
+  one_sample_per_category: true

@@ -316,7 +316,7 @@ class VisionTransformerDiffPruning(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None, representation_size=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., hybrid_backbone=None, norm_layer=None,
-                 pruning_loc=None, token_ratio=None, distill=False):
+                 pruning_loc=None, token_ratio=None, distill=False, use_patch_tokens=False):
         """
         Args:
             img_size (int, tuple): input image size
@@ -375,7 +375,10 @@ class VisionTransformerDiffPruning(nn.Module):
             self.pre_logits = nn.Identity()
 
         # Classifier head
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.use_patch_tokens = use_patch_tokens
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 and not use_patch_tokens else nn.Identity()
+        if use_patch_tokens:
+            self.patch_head = nn.ConvTranspose2d(embed_dim, in_chans, kernel_size=patch_size, stride=patch_size)
 
         predictor_list = [PredictorLG(embed_dim) for _ in range(len(pruning_loc))]
 
@@ -433,11 +436,13 @@ class VisionTransformerDiffPruning(nn.Module):
         x = x + self.pos_embed
 
         x = self.pos_drop(x)
+        dense_features = x[:, 1:]
+        token_indices = torch.arange(n, device=x.device).unsqueeze(0).expand(B, -1) if self.use_patch_tokens else None
         #print('x shape after pos drop:{}'.format(x.shape))
 
         p_count = 0
         out_pred_prob = []
-        init_n = 16*16
+        init_n = n
         prev_decision = torch.ones(B, init_n, 1, dtype=x.dtype, device=x.device)
         policy = torch.ones(B, init_n + 1, 1, dtype=x.dtype, device=x.device)
         #print("policy shape:{}".format(policy.shape))
@@ -459,6 +464,8 @@ class VisionTransformerDiffPruning(nn.Module):
                     cls_policy = torch.zeros(B, 1, dtype=keep_policy.dtype, device=keep_policy.device)
                     now_policy = torch.cat([cls_policy, keep_policy + 1], dim=1)
                     x = batch_index_select(x, now_policy)
+                    if self.use_patch_tokens:
+                        token_indices = batch_index_select(token_indices, keep_policy)
                     prev_decision = batch_index_select(prev_decision, keep_policy)
                     x = blk(x)
                 p_count += 1
@@ -474,11 +481,20 @@ class VisionTransformerDiffPruning(nn.Module):
         x = self.norm(x)
 
         features = x[:, 1:]
-        x = x[:, 0]
-        #print("x shape before head:" + str(x.shape))
-        x = self.pre_logits(x)
-        #print("x shape after logits:" + str(x.shape))
-        x = self.head(x)
+        if self.use_patch_tokens:
+            dense_features = self.norm(dense_features)
+            if self.training:
+                dense_features = features * prev_decision + dense_features * (1 - prev_decision)
+            else:
+                index = token_indices.unsqueeze(2).expand(-1, -1, C)
+                dense_features = dense_features.scatter(1, index, features)
+            grid_h = self.patch_embed.img_size[0] // self.patch_embed.patch_size[0]
+            grid_w = self.patch_embed.img_size[1] // self.patch_embed.patch_size[1]
+            x = dense_features.transpose(1, 2).reshape(B, C, grid_h, grid_w)
+            x = self.patch_head(x).flatten(1)
+        else:
+            x = self.pre_logits(x[:, 0])
+            x = self.head(x)
         #print("x shape after head:" + str(x.shape))
 
         if self.training:

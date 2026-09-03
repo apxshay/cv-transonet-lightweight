@@ -1,0 +1,16 @@
+inherit_from: configs/shapenet/v2_patch_tokens/train.yaml
+
+data:
+  path: /dataset
+
+training:
+  out_dir: out/v2_patch_tokens/test
+
+test:
+  model_file: /workspace/out/v2_patch_tokens/train/model_best.pt
+
+generation:
+  vis_n_outputs: null
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: false

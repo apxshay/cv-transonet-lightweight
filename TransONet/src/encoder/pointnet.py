@@ -46,7 +46,7 @@ class DynamicLocalPoolPointnet(nn.Module):
     def __init__(self, c_dim=128, dim=3, hidden_dim=128, scatter_type='max', unet=False, unet_kwargs=None,
                  plane_resolution=None,
                  grid_resolution=None, plane_type='xz', padding=0.1, n_blocks=5, pos_encoding=False, n_channels=3,
-                 plane_net='FCPlanenet'):
+                 plane_net='FCPlanenet', use_patch_tokens=False):
         super().__init__()
         self.c_dim = c_dim
         self.num_channels = n_channels
@@ -88,7 +88,8 @@ class DynamicLocalPoolPointnet(nn.Module):
         self.transformer = VisionTransformerDiffPruning(
             img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
             num_heads=8, mlp_ratio=4, qkv_bias=True,
-            pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0
+            pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0,
+            use_patch_tokens=use_patch_tokens
         ).cuda()
 
         self.loss_dvit = torch.nn.CrossEntropyLoss()

@@ -1,0 +1,12 @@
+inherit_from: configs/shapenet/v1_duff/train.yaml
+
+model:
+  encoder_kwargs:
+    use_patch_tokens: true
+
+training:
+  out_dir: out/v2_patch_tokens/train
+  validate_every: 1000
+
+test:
+  model_file: /workspace/model_versions/v2_patch_tokens/weights/model.pt
