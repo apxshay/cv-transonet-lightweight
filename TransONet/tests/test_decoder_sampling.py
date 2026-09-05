@@ -19,6 +19,18 @@ class TestDecoderSampling(unittest.TestCase):
         self.assertEqual(tuple(out.shape), (B, Q))
         self.assertFalse(torch.allclose(out, out_sum, atol=1e-4))
 
+    def test_channels_differ_from_resolution(self):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        B, L, C, R, Q = 2, 3, 16, 32, 9
+        dec = make_decoder(c_dim=C).to(device)
+        p = torch.rand(B, Q, 3, device=device) - 0.5
+        maps = torch.randn(B, L, C, R, R, device=device)
+        bases = axis_bases(B, device=device)
+        z = torch.empty(B, 0, device=device)
+        out = dec(p, z, {'planes': maps, 'c_mat': bases})
+        self.assertEqual(tuple(out.shape), (B, Q))
+        self.assertTrue(torch.isfinite(out).all())
+
 
 if __name__ == '__main__':
     unittest.main()

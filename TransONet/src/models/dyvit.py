@@ -374,8 +374,8 @@ class VisionTransformerDiffPruning(nn.Module):
         else:
             self.pre_logits = nn.Identity()
 
-        # Classifier head
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = nn.Identity()
+        self.patch_head = nn.ConvTranspose2d(embed_dim, in_chans, kernel_size=patch_size, stride=patch_size)
 
         predictor_list = [PredictorLG(embed_dim) for _ in range(len(pruning_loc))]
 
@@ -437,7 +437,7 @@ class VisionTransformerDiffPruning(nn.Module):
 
         p_count = 0
         out_pred_prob = []
-        init_n = 16*16
+        init_n = n
         prev_decision = torch.ones(B, init_n, 1, dtype=x.dtype, device=x.device)
         policy = torch.ones(B, init_n + 1, 1, dtype=x.dtype, device=x.device)
         #print("policy shape:{}".format(policy.shape))
@@ -468,23 +468,16 @@ class VisionTransformerDiffPruning(nn.Module):
                 else:
                     x = blk(x)
         #print('x shape after blocks {}'.format(x.shape))
-        B,N,C = x.shape
-        H = W = int((N)**0.5)
-        #x = x.view(B,H,W,C)
         x = self.norm(x)
-
-        features = x[:, 1:]
-        x = x[:, 0]
-        #print("x shape before head:" + str(x.shape))
-        x = self.pre_logits(x)
-        #print("x shape after logits:" + str(x.shape))
-        x = self.head(x)
-        #print("x shape after head:" + str(x.shape))
+        feat = x[:, 1:]
+        h = self.patch_embed.img_size[0] // self.patch_embed.patch_size[0]
+        w = self.patch_embed.img_size[1] // self.patch_embed.patch_size[1]
+        x = self.patch_head(feat.transpose(1, 2).reshape(B, self.embed_dim, h, w))
 
         if self.training:
             if self.distill:
                 #print('here')
-                return x, features, prev_decision.detach(), out_pred_prob
+                return x, feat, prev_decision.detach(), out_pred_prob
             else:
                 #print("train no distill")
                 return x, out_pred_prob

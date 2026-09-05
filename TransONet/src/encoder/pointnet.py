@@ -69,10 +69,10 @@ class DynamicLocalPoolPointnet(nn.Module):
         ])
 
         self.plane_params_hdim = nn.ModuleList([
-            nn.Linear(3, hidden_dim) for i in range(n_channels)
+            nn.Linear(3, c_dim) for i in range(n_channels)
         ])
 
-        self.actvn = SineLayer(in_features=c_dim, out_features=c_dim, is_first=True)
+        self.actvn = SineLayer(in_features=hidden_dim, out_features=hidden_dim, is_first=True)
         self.hidden_dim = hidden_dim
 
 
@@ -87,14 +87,14 @@ class DynamicLocalPoolPointnet(nn.Module):
         self.KEEP_RATE = [0.7]
 
         self.transformer = VisionTransformerDiffPruning(
-            img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
+            img_size=self.reso_plane, patch_size=2, embed_dim=self.c_dim, depth=2, in_chans=self.c_dim, num_classes=0,
             num_heads=8, mlp_ratio=4, qkv_bias=True,
             pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0
         )
 
         self.loss_dvit = torch.nn.CrossEntropyLoss()
         self.teacher_model = VisionTransformerTeacher(
-            img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
+            img_size=self.reso_plane, patch_size=2, embed_dim=self.c_dim, depth=2, in_chans=self.c_dim, num_classes=0,
             num_heads=8, mlp_ratio=4, qkv_bias=True)
 
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -155,7 +155,7 @@ class DynamicLocalPoolPointnet(nn.Module):
         y = self.transformer(x)
         if isinstance(y, tuple):
             y = y[0]
-        return y.reshape(x.shape)
+        return y
 
     def pool_local(self, xy, index, c):
         bs, fea_dim = c.size(0), c.size(2)
