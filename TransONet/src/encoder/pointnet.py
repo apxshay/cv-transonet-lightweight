@@ -2,13 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from src.layers import ResnetBlockFC, FCPlanenet
-from torch_scatter import scatter_mean, scatter_max
+from torch_scatter import scatter_mean, scatter_max, scatter_sum
+from torch_scatter.composite import scatter_softmax
 from src.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate, positional_encoding, \
     normalize_dynamic_plane_coordinate, ChangeBasis
 
 
 from ..models.mvit_model import MViT
 from ..models.dyvit import VisionTransformerDiffPruning, VisionTransformerTeacher
+from ..models.plane_transformer import HybridPlaneTransformer
 from ..models.losses import DistillDiffPruningLoss_dynamic
 from ..models.fast_quant import fast_quant
 from ..models.generic_transformer import Transformer
@@ -46,7 +48,12 @@ class DynamicLocalPoolPointnet(nn.Module):
     def __init__(self, c_dim=128, dim=3, hidden_dim=128, scatter_type='max', unet=False, unet_kwargs=None,
                  plane_resolution=None,
                  grid_resolution=None, plane_type='xz', padding=0.1, n_blocks=5, pos_encoding=False, n_channels=3,
-                 plane_net='FCPlanenet', use_patch_tokens=False):
+                 plane_net='FCPlanenet', use_patch_tokens=False,
+                 point_grid_attention=False, grid_attention_dim=16,
+                 correct_plane_fusion=False, transformer_patch_size=2,
+                 teacher_patch_tokens=False, plane_processor='dyvit',
+                 transformer_dim=128, transformer_depth=4,
+                 transformer_heads=4):
         super().__init__()
         self.c_dim = c_dim
         self.num_channels = n_channels
@@ -59,6 +66,14 @@ class DynamicLocalPoolPointnet(nn.Module):
             ResnetBlockFC(2 * hidden_dim, hidden_dim) for i in range(n_blocks)
         ])
         self.fc_c = nn.Linear(hidden_dim, c_dim)
+        self.point_grid_attention = point_grid_attention
+        if point_grid_attention:
+            self.grid_attention = nn.Sequential(
+                nn.Linear(c_dim + 2, grid_attention_dim), nn.SiLU(),
+                nn.Linear(grid_attention_dim, 1))
+            nn.init.zeros_(self.grid_attention[-1].weight)
+            nn.init.zeros_(self.grid_attention[-1].bias)
+            self.grid_attention_gate = nn.Parameter(torch.tensor(0.))
         planenet_hidden_dim = hidden_dim
         self.fc_plane_net = FCPlanenet(n_dim=dim, hidden_dim=hidden_dim)
 
@@ -76,33 +91,43 @@ class DynamicLocalPoolPointnet(nn.Module):
 
 
         self.reso_plane = plane_resolution
+        self.correct_plane_fusion = correct_plane_fusion
+        self.plane_processor = plane_processor
+        if correct_plane_fusion and plane_processor != 'hybrid_transformer':
+            self.plane_fusion = nn.Conv2d(n_channels * c_dim, c_dim, 1, bias=False)
+            with torch.no_grad():
+                weights = torch.eye(c_dim).repeat(1, n_channels) / n_channels
+                self.plane_fusion.weight.copy_(weights[:, :, None, None])
         self.reso_grid = grid_resolution
         self.plane_type = plane_type
         self.padding = padding
         self.optimizer = None
 
-
-        PRUNING_LOC = [1]
-        self.KEEP_RATE = [0.7]
-
-        self.transformer = VisionTransformerDiffPruning(
-            img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
-            num_heads=8, mlp_ratio=4, qkv_bias=True,
-            pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0,
-            use_patch_tokens=use_patch_tokens
-        ).cuda()
-
-        self.loss_dvit = torch.nn.CrossEntropyLoss()
-        self.teacher_model = VisionTransformerTeacher(
-            img_size=self.reso_plane, patch_size=2, embed_dim=self.reso_plane, depth=2, in_chans=self.reso_plane, num_classes=512 * 64,
-            num_heads=8, mlp_ratio=4, qkv_bias=True).cuda()
-
-        self.criterion = torch.nn.CrossEntropyLoss()
-
-        self.criterion = DistillDiffPruningLoss_dynamic(
-            self.teacher_model, self.criterion, clf_weight=0.0, keep_ratio=self.KEEP_RATE, mse_token=True,
-            ratio_weight=2.0, distill_weight=0.5, dynamic=True
-        )
+        if plane_processor == 'hybrid_transformer':
+            self.transformer = HybridPlaneTransformer(
+                in_channels=c_dim, num_planes=n_channels,
+                dim=transformer_dim, depth=transformer_depth,
+                num_heads=transformer_heads)
+            print('plane processor: hybrid transformer')
+        else:
+            PRUNING_LOC = [1]
+            self.KEEP_RATE = [0.7]
+            self.transformer = VisionTransformerDiffPruning(
+                img_size=self.reso_plane, patch_size=transformer_patch_size, embed_dim=c_dim, depth=2, in_chans=c_dim,
+                num_classes=c_dim * self.reso_plane ** 2,
+                num_heads=8, mlp_ratio=4, qkv_bias=True,
+                pruning_loc=PRUNING_LOC, token_ratio=self.KEEP_RATE, distill=True, drop_path_rate=0.0,
+                use_patch_tokens=use_patch_tokens
+            ).cuda()
+            self.teacher_model = VisionTransformerTeacher(
+                img_size=self.reso_plane, patch_size=transformer_patch_size, embed_dim=c_dim, depth=2, in_chans=c_dim,
+                num_classes=c_dim * self.reso_plane ** 2,
+                num_heads=8, mlp_ratio=4, qkv_bias=True,
+                use_patch_tokens=teacher_patch_tokens).cuda()
+            self.criterion = DistillDiffPruningLoss_dynamic(
+                self.teacher_model, torch.nn.CrossEntropyLoss(),
+                clf_weight=0.0, keep_ratio=self.KEEP_RATE, mse_token=True,
+                ratio_weight=2.0, distill_weight=0.5, dynamic=True)
 
         if scatter_type == 'max':
             self.scatter = scatter_max
@@ -115,7 +140,7 @@ class DynamicLocalPoolPointnet(nn.Module):
         if pos_encoding:
             self.pe = positional_encoding()
 
-    def generate_dynamic_plane_features(self, p, c, normal_feature, basis_normalizer_matrix):
+    def project_dynamic_plane_features(self, p, c, normal_feature, basis_normalizer_matrix):
         # acquire indices of features in plane
 
         xy = normalize_dynamic_plane_coordinate(p.clone(), basis_normalizer_matrix,
@@ -125,17 +150,51 @@ class DynamicLocalPoolPointnet(nn.Module):
         # scatter plane features from points
         fea_plane = c.new_zeros(p.size(0), self.c_dim, self.reso_plane ** 2)
 
-        c = c.permute(0, 2, 1)  # B x 512 x T
-        c = c + normal_feature.unsqueeze(2)
-        fea_plane = scatter_mean(c, index, out=fea_plane)  # B x 512 x reso^2
+        point_features = c + normal_feature.unsqueeze(1)
+        c = point_features.permute(0, 2, 1)
+        fea_plane = scatter_mean(c, index, out=fea_plane)
+
+        if self.point_grid_attention:
+            cell_center = (torch.floor(xy * self.reso_plane) + 0.5) / self.reso_plane
+            offset = (xy - cell_center) * self.reso_plane
+            scores = self.grid_attention(
+                torch.cat([point_features, offset], dim=2)).transpose(1, 2)
+            weights = scatter_softmax(scores, index, dim=2)
+            attended = scatter_sum(c * weights, index, out=torch.zeros_like(fea_plane))
+            gate = torch.sigmoid(self.grid_attention_gate)
+            fea_plane = fea_plane + gate * (attended - fea_plane)
         fea_plane = fea_plane.reshape(p.size(0), self.c_dim, self.reso_plane,
                                       self.reso_plane)  # sparce matrix (B x 512 x reso x reso)
+        return fea_plane
+
+    def generate_dynamic_plane_features(self, p, c, normal_feature, basis_normalizer_matrix):
+        if self.plane_processor == 'hybrid_transformer':
+            planes = [self.project_dynamic_plane_features(
+                p, c, normal_feature[l], basis_normalizer_matrix[:, l])
+                for l in range(self.num_channels)]
+            fea_plane = torch.stack(planes, dim=1)
+        elif self.correct_plane_fusion:
+            planes = [self.project_dynamic_plane_features(
+                p, c, normal_feature[l], basis_normalizer_matrix[:, l])
+                for l in range(self.num_channels)]
+            fea_plane = self.plane_fusion(torch.cat(planes, dim=1))
+        else:
+            fea_plane = self.project_dynamic_plane_features(
+                p, c, normal_feature, basis_normalizer_matrix)
 
         loss_dvit = None
         fea_plane_before = fea_plane
 
         # profiling: encoder (end)
         self.end_enc_prof(p)
+
+        if self.plane_processor == 'hybrid_transformer':
+            self.start_dyvit_prof(p)
+            fea_plane = self.transformer(fea_plane)
+            self.end_dyvit_prof(p)
+            if self.training:
+                return fea_plane, fea_plane.new_zeros(())
+            return fea_plane
 
         if self.training:
             B, H, W, C = fea_plane.shape
@@ -233,14 +292,13 @@ class DynamicLocalPoolPointnet(nn.Module):
         fea = {}
         fea_loss = {}
         plane_loss = 0
-        l_0 = range(C_mat.size()[1])[1]
-
-        normal_fea_hdims = torch.zeros_like(normal_fea_hdim['plane{}'.format(l_0)])
-        C_mats = torch.zeros_like(C_mat[:,l_0])
-
-        for l in range(C_mat.size()[1]):
-            normal_fea_hdims = normal_fea_hdims + normal_fea_hdim['plane{}'.format(l)]
-            C_mats += C_mat[:,l]
+        if self.correct_plane_fusion:
+            normal_fea_hdims = [normal_fea_hdim['plane{}'.format(l)]
+                                for l in range(C_mat.size(1))]
+            C_mats = C_mat
+        else:
+            normal_fea_hdims = sum(normal_fea_hdim.values())
+            C_mats = C_mat.sum(dim=1)
         if self.training:
             fea['planes'], fea_loss['planes_loss'] = self.generate_dynamic_plane_features(p, c, normal_fea_hdims, C_mats)
             plane_loss += fea_loss['planes_loss']
@@ -341,9 +399,23 @@ class DynamicLocalPoolPointnet(nn.Module):
         def count_macs(mod, inp, out):
             if isinstance(mod, nn.Linear):
                 self.dyvit_macs += out.numel() * mod.in_features
+            elif isinstance(mod, nn.Conv2d):
+                kernel = mod.kernel_size[0] * mod.kernel_size[1]
+                self.dyvit_macs += out.numel() * mod.in_channels // mod.groups * kernel
+            elif isinstance(mod, nn.ConvTranspose2d):
+                kernel = mod.kernel_size[0] * mod.kernel_size[1]
+                self.dyvit_macs += inp[0].numel() * mod.out_channels // mod.groups * kernel
+            elif isinstance(mod, nn.MultiheadAttention):
+                batch, tokens, channels = inp[0].shape
+                self.dyvit_macs += batch * (4 * tokens * channels ** 2
+                                             + 2 * tokens ** 2 * channels)
 
+        mha_outputs = {id(mod.out_proj) for mod in self.transformer.modules()
+                       if isinstance(mod, nn.MultiheadAttention)}
         for mod in self.transformer.modules():
-            if isinstance(mod, nn.Linear):
+            if isinstance(mod, (nn.Conv2d, nn.ConvTranspose2d,
+                                nn.MultiheadAttention)) or (
+                    isinstance(mod, nn.Linear) and id(mod) not in mha_outputs):
                 self.dyvit_hooks.append(mod.register_forward_hook(count_macs))
 
         if p.is_cuda:
@@ -383,7 +455,9 @@ class DynamicLocalPoolPointnet(nn.Module):
         else:
             mem_a, mem_r = 0.0, 0.0
 
-        print_profile_row('DyViT', mean_t, mem_a, mem_r,
+        block_name = ('Plane transformer' if self.plane_processor == 'hybrid_transformer'
+                      else 'DyViT')
+        print_profile_row(block_name, mean_t, mem_a, mem_r,
                           params=nparams, macs=self.dyvit_macs)
         self.dyvit_done = True
 

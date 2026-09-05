@@ -1,0 +1,19 @@
+inherit_from: configs/shapenet/v7_hybrid_plane_transformer/train.yaml
+
+data:
+  classes: null
+
+training:
+  out_dir: out/v7_hybrid_plane_transformer/profile
+
+test:
+  model_file: /workspace/out/v7_hybrid_plane_transformer/train/model_best.pt
+
+generation:
+  vis_n_outputs: 1
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: true
+
+profiling:
+  one_sample_per_category: true

@@ -33,7 +33,7 @@ def print_profile_row(block, mean_seconds, allocated_mb, reserved_mb,
         ('Reserved [MB]', 15),
         ('Parameters', 14),
         ('FP32 [MB]', 12),
-        ('Linear MACs', 16),
+        ('Estimated MACs', 16),
     )
     separator_width = sum(width for _, width in columns) + len(columns) - 1
 

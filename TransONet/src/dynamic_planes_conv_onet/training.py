@@ -41,6 +41,7 @@ class Trainer(BaseTrainer):
         self.threshold = threshold
         self.eval_sample = eval_sample
         self.beta_vae = beta_vae
+        self.scaler = None
 
         if vis_dir is not None and not os.path.exists(vis_dir):
             os.makedirs(vis_dir)
@@ -54,14 +55,26 @@ class Trainer(BaseTrainer):
         '''
         self.model.train()
         debug_anomaly = cfg.get('training', {}).get('debug_anomaly', False)
+        amp_mode = cfg.get('training', {}).get('mixed_precision', False)
+        use_amp = amp_mode in (True, 'fp16', 'bf16')
+        amp_dtype = torch.bfloat16 if amp_mode == 'bf16' else torch.float16
         self.optimizer.zero_grad(set_to_none=True)
         #loss, plane_loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
         anomaly_context = torch.autograd.detect_anomaly() if debug_anomaly else nullcontext()
+        amp_context = torch.autocast(device_type='cuda', dtype=amp_dtype) if use_amp else nullcontext()
         with anomaly_context:
-            loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
-            loss.backward()
+            with amp_context:
+                loss = self.compute_loss(cfg, data, DEGREES = DEGREES)
 
-        self.optimizer.step()
+        if amp_mode in (True, 'fp16'):
+            if self.scaler is None:
+                self.scaler = torch.amp.GradScaler('cuda')
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
 
         return loss.item()
 

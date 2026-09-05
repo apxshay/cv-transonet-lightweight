@@ -1,0 +1,16 @@
+inherit_from: configs/shapenet/v6_multiplane_fusion/train.yaml
+
+model:
+  encoder_kwargs:
+    plane_processor: hybrid_transformer
+    transformer_dim: 128
+    transformer_depth: 4
+    transformer_heads: 4
+
+training:
+  out_dir: out/v7_hybrid_plane_transformer/train
+  batch_size: 128
+  mixed_precision: bf16
+
+test:
+  model_file: model.pt

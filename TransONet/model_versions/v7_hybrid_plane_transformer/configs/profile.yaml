@@ -1,0 +1,19 @@
+inherit_from: model_versions/v7_hybrid_plane_transformer/configs/train.yaml
+
+data:
+  classes: null
+
+training:
+  out_dir: out/scratch/v7_hybrid_plane_transformer_profile
+
+test:
+  model_file: /workspace/model_versions/v7_hybrid_plane_transformer/weights/model_best.pt
+
+generation:
+  vis_n_outputs: 1
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: true
+
+profiling:
+  one_sample_per_category: true

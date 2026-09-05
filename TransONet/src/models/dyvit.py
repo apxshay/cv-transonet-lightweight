@@ -516,7 +516,8 @@ class VisionTransformerTeacher(nn.Module):
     """
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None, representation_size=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., hybrid_backbone=None, norm_layer=None):
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., hybrid_backbone=None, norm_layer=None,
+                 use_patch_tokens=False):
         """
         Args:
             img_size (int, tuple): input image size
@@ -576,7 +577,11 @@ class VisionTransformerTeacher(nn.Module):
             self.pre_logits = nn.Identity()
 
         # Classifier head
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.use_patch_tokens = use_patch_tokens
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 and not use_patch_tokens else nn.Identity()
+        if use_patch_tokens:
+            self.patch_head = nn.ConvTranspose2d(
+                embed_dim, in_chans, kernel_size=patch_size, stride=patch_size)
 
         trunc_normal_(self.pos_embed, std=.02)
         trunc_normal_(self.cls_token, std=.02)
@@ -619,8 +624,14 @@ class VisionTransformerTeacher(nn.Module):
         feature = self.norm(x)
         cls = feature[:, 0]
         tokens = feature[:, 1:]
-        cls = self.pre_logits(cls)
-        cls = self.head(cls)
+        if self.use_patch_tokens:
+            grid_h = self.patch_embed.img_size[0] // self.patch_embed.patch_size[0]
+            grid_w = self.patch_embed.img_size[1] // self.patch_embed.patch_size[1]
+            cls = tokens.transpose(1, 2).reshape(B, self.embed_dim, grid_h, grid_w)
+            cls = self.patch_head(cls).flatten(1)
+        else:
+            cls = self.pre_logits(cls)
+            cls = self.head(cls)
         return cls, tokens
 
 def resize_pos_embed(posemb, posemb_new):

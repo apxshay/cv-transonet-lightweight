@@ -1,0 +1,16 @@
+inherit_from: configs/shapenet/v7_hybrid_plane_transformer/train.yaml
+
+data:
+  classes: null
+
+training:
+  out_dir: out/v7_hybrid_plane_transformer/test
+
+test:
+  model_file: /workspace/out/v7_hybrid_plane_transformer/train/model_best.pt
+
+generation:
+  vis_n_outputs: null
+  generate_pointcloud: false
+  copy_groundtruth: false
+  copy_input: false

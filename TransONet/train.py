@@ -154,6 +154,8 @@ print_every = cfg['training']['print_every']
 checkpoint_every = cfg['training']['checkpoint_every']
 validate_every = cfg['training']['validate_every']
 visualize_every = cfg['training']['visualize_every']
+validation_timing = cfg['training'].get('validation_timing', False)
+validation_timing_warmed_up = False
 
 # Print model
 nparameters = sum(p.numel() for p in model.parameters())
@@ -252,6 +254,22 @@ for epoch in range(epoch_it, max_epochs): #epoch 13 scenes
                 checkpoint_io.save('model_best.pt', epoch_it=epoch_it, it=it,
                                    loss_val_best=metric_val_best)
                 print('New best model (%s %.4f)' % (model_selection_metric, metric_val_best), flush=True)
+
+            if validation_timing and data_vis_list:
+                timing_data = data_vis_list[0]['data']
+                if not validation_timing_warmed_up:
+                    generator.generate_mesh(timing_data, return_stats=False)
+                    validation_timing_warmed_up = True
+                if is_cuda:
+                    torch.cuda.synchronize()
+                timing_start = time.perf_counter()
+                generator.generate_mesh(timing_data, return_stats=False)
+                if is_cuda:
+                    torch.cuda.synchronize()
+                print('[Validation generation] %s: %.2f ms/mesh'
+                      % (data_vis_list[0]['category'],
+                         (time.perf_counter() - timing_start) * 1000), flush=True)
+                model.train()
 
         # Exit if necessary
         if exit_after > 0 and (time.time() - t0) >= exit_after:
